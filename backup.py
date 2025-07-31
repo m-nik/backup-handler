@@ -131,6 +131,7 @@ def main():
         backup_filename = f"{BACKUP_NAME}_{timestamp}.tar.gz"
         backup_path = os.path.join(BACKUP_DIR, backup_filename)
 
+        logger.info(f"========================")
         logger.info(f"Creating backup from: {SOURCE_DIR}")
 
         with tarfile.open(backup_path, "w:gz") as tar:
