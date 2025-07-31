@@ -9,7 +9,9 @@ import boto3
 
 # === Load config.ini ===
 config = configparser.ConfigParser()
-config.read("config.ini")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_FILE = os.path.join(BASE_DIR, "config.ini")
+config.read(CONFIG_FILE)
 
 # === Configuration ===
 SOURCE_DIR = config["backup"]["source_dir"]
