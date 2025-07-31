@@ -59,6 +59,12 @@ S3_PREFIX=daily/
 S3_ACCESS_KEY=YOUR_S3_ACCESS_KEY
 S3_SECRET_KEY=YOUR_S3_SECRET_KEY
 S3_ENDPOINT=https://s3.minio.site.com
+
+# Prometheus metrics configurations
+ENABLE_METRICS=true
+PUSHGATEWAY_URL=http://localhost:9091
+JOB_NAME=backup_job
+INSTANCE=my-backup-node01
 ```
 
 ---

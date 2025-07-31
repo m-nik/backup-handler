@@ -5,6 +5,7 @@ import logging
 from dotenv import load_dotenv
 import boto3
 import sys
+from prometheus_client import CollectorRegistry, Gauge, push_to_gateway
 
 load_dotenv()
 
@@ -42,6 +43,27 @@ if not logger.hasHandlers():
     logger.addHandler(file_handler)
     logger.addHandler(console_handler)
 
+def push_status_to_prometheus(status: str, message: str = "", value: int = 1):
+    """Push a metric to Prometheus Pushgateway if enabled"""
+    if os.getenv("ENABLE_METRICS", "false").lower() != "true":
+        return
+
+    try:
+        registry = CollectorRegistry()
+        g = Gauge('backup_status', 'Status of backup job', ['status', 'message'], registry=registry)
+        g.labels(status=status, message=message[:100]).set(value)
+
+        push_to_gateway(
+            os.getenv("PUSHGATEWAY_URL"),
+            job=os.getenv("JOB_NAME", "backup_job"),
+            grouping_key={'instance': os.getenv("INSTANCE", "localhost")},
+            registry=registry
+        )
+        logger.info(f"Pushed status to Prometheus: {status} - {message}")
+    except Exception as e:
+        logger.warning(f"Could not push to Prometheus Pushgateway: {e}")
+
+
 def clean_old_backups():
     try:
         backups = sorted(
@@ -52,16 +74,22 @@ def clean_old_backups():
 
         if len(backups) <= MAX_BACKUPS:
             logger.info("No cleanup needed, within backup retention limit.")
+            push_status_to_prometheus("cleanup", "no cleanup needed", value=0)
             return
 
         to_delete = backups[:len(backups) - MAX_BACKUPS]
+        deleted_count = 0
         for f in to_delete:
             path = os.path.join(BACKUP_DIR, f)
             try:
                 os.remove(path)
                 logger.info(f"Deleted old backup: {f}")
+                deleted_count += 1
             except Exception as e:
                 logger.warning(f"Failed to delete {f}: {e}")
+
+        push_status_to_prometheus("cleanup", "old backups cleaned", value=deleted_count)
+
     except Exception as e:
         logger.warning(f"Could not clean old backups: {e}")
 
@@ -99,8 +127,12 @@ def main():
         clean_old_backups()
 
         logger.info("Backup process completed successfully.")
+        
+        push_status_to_prometheus("success", "backup and upload succeeded")
+
     except Exception as e:
         logger.exception(f"Error during backup: {e}")
+        push_status_to_prometheus("failure", str(e))
         sys.exit(1)
 
 if __name__ == "__main__":
