@@ -34,39 +34,70 @@ pip install -r requirements.txt
 
 ## 📝 Configuration
 
-Create a `.env` file like this:
+The script reads settings from a `config.ini` file in the same directory. Below is an example configuration file with explanations:
 
 ```ini
-# Source directory to back up
-SOURCE_DIR=/path/to/data
+[backup]
+# Directory to backup (source data)
+source_dir = /path/to/data
 
-# Directory where backup .tar.gz files are stored temporarily
-BACKUP_DIR=/path/to/backups
+# Directory to store local backup files
+backup_dir = /path/to/backups
 
-# Log file location
-LOG_FILE=/var/log/generic-backup/backup.log
+# Base name for backup files; timestamp and .tar.gz extension will be appended automatically
+backup_name = my_backup
 
-# Number of backup files to keep locally
-MAX_BACKUPS=5
+# How many backup files to keep locally; older backups are deleted automatically
+max_backups = 5
 
-# Base name for the backup file (e.g. mydata_2025-08-01_12-00-00.tar.gz)
-BACKUP_NAME=mydata
+[s3]
+# Enable uploading backups to S3-compatible storage (true/false)
+enabled = true
 
-# S3-compatible storage configuration
-ENABLE_S3_UPLOAD=true
-S3_REGION=myregion
-S3_BUCKET=my-backup-bucket
-S3_PREFIX=daily/
-S3_ACCESS_KEY=YOUR_S3_ACCESS_KEY
-S3_SECRET_KEY=YOUR_S3_SECRET_KEY
-S3_ENDPOINT=https://s3.minio.site.com
+# MinIO region (can be any string, optional)
+region = us-east-1
 
-# Prometheus metrics configurations
-ENABLE_METRICS=true
-PUSHGATEWAY_URL=http://localhost:9091
-JOB_NAME=backup_job
-INSTANCE=my-backup-node01
+# S3 bucket name in MinIO
+bucket = my-backup-bucket
+
+# Prefix (folder path in bucket)
+prefix = backups/
+
+# Access credentials (from MinIO)
+access_key = minioadmin
+secret_key = minioadmin
+
+# MinIO endpoint URL (usually looks like this if self-hosted locally)
+endpoint = http://localhost:9000
+
+[logging]
+# Path to the log file where the script writes info and errors
+log_file = /var/log/backup_script/backup.log
+
+[metrics]
+# Enable Prometheus Pushgateway metrics reporting (true/false)
+enabled = true
+
+# URL of Prometheus Pushgateway (e.g., http://localhost:9091)
+pushgateway_url = http://localhost:9091
+
+# Job name to use in Prometheus metrics
+job_name = backup_job
+
+# Instance label (usually hostname or server id)
+instance = myserver01
 ```
+
+---
+
+## How It Works
+
+* The script creates a compressed tarball (`.tar.gz`) backup of the folder specified in `source_dir`.
+* Backups are saved locally in `backup_dir` with filenames like `my_backup_2025-07-31_10-00-00.tar.gz`.
+* It keeps only the latest `max_backups` files locally and deletes older backups automatically.
+* If S3 upload is enabled, it uploads the backup file to the configured S3 bucket and prefix.
+* If metrics are enabled, the script sends backup status metrics to the Prometheus Pushgateway, including success/failure, upload status, and cleanup results.
+* Logs are saved both to a file and the console for easy monitoring.
 
 ---
 
@@ -108,8 +139,11 @@ sudo chown root:root /etc/cron.d/backup
 ## 🔒 Notes
 
 * Ensure write permissions for `BACKUP_DIR` and `LOG_FILE`.
-* Make sure `.env` file is protected (`chmod 600` recommended).
+* For S3 uploads, ensure your credentials and bucket permissions are correct.
+* Prometheus Pushgateway should be accessible from the machine running this script if metrics are enabled.
+* You can disable S3 uploads or metrics by setting `enabled = false` under the respective sections.
 
+---
 ---
 
 ## 📄 License

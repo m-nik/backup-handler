@@ -2,36 +2,38 @@ import os
 import tarfile
 import datetime
 import logging
-from dotenv import load_dotenv
-import boto3
 import sys
+import configparser
 from prometheus_client import CollectorRegistry, Gauge, push_to_gateway
+import boto3
 
-load_dotenv()
+# === Load config.ini ===
+config = configparser.ConfigParser()
+config.read("config.ini")
 
-# === Configuration from .env ===
-SOURCE_DIR = os.getenv("SOURCE_DIR")
-LOG_FILE = os.getenv("LOG_FILE")
-BACKUP_DIR = os.getenv("BACKUP_DIR", "/tmp/backups")
-MAX_BACKUPS = int(os.getenv("MAX_BACKUPS", "5"))
-BACKUP_NAME = os.getenv("BACKUP_NAME", "backup")
+# === Configuration ===
+SOURCE_DIR = config["backup"]["source_dir"]
+BACKUP_DIR = config["backup"].get("backup_dir", "/tmp/backups")
+BACKUP_NAME = config["backup"].get("backup_name", "backup")
+MAX_BACKUPS = int(config["backup"].get("max_backups", 5))
 
-# S3 settings
-ENABLE_S3_UPLOAD = os.getenv("ENABLE_S3_UPLOAD", "false").lower() == "true"
-S3_REGION = os.getenv("S3_REGION")
-S3_BUCKET = os.getenv("S3_BUCKET")
-S3_PREFIX = os.getenv("S3_PREFIX", "")
-S3_ACCESS_KEY = os.getenv("S3_ACCESS_KEY")
-S3_SECRET_KEY = os.getenv("S3_SECRET_KEY")
-S3_ENDPOINT = os.getenv("S3_ENDPOINT")
+# Logging
+LOG_FILE = config["logging"]["log_file"]
 
-# Prometheus Pushgateway
-ENABLE_METRICS = os.getenv("ENABLE_METRICS", "false").lower() == "true"
-PUSHGATEWAY_URL = os.getenv("PUSHGATEWAY_URL")
-PROM_JOB_NAME = os.getenv("JOB_NAME", "backup_job")
-PROM_INSTANCE = os.getenv("INSTANCE", "localhost")
+# S3
+ENABLE_S3_UPLOAD = config.getboolean("s3", "enabled", fallback=False)
+S3_REGION = config["s3"].get("region")
+S3_BUCKET = config["s3"].get("bucket")
+S3_PREFIX = config["s3"].get("prefix", "")
+S3_ACCESS_KEY = config["s3"].get("access_key")
+S3_SECRET_KEY = config["s3"].get("secret_key")
+S3_ENDPOINT = config["s3"].get("endpoint")
 
-
+# Prometheus
+ENABLE_METRICS = config.getboolean("metrics", "enabled", fallback=False)
+PUSHGATEWAY_URL = config["metrics"].get("pushgateway_url")
+PROM_JOB_NAME = config["metrics"].get("job_name", "backup_job")
+PROM_INSTANCE = config["metrics"].get("instance", "localhost")
 
 # ==== Logging ====
 logger = logging.getLogger("generic-backup")
@@ -57,10 +59,8 @@ if not logger.hasHandlers():
 
 
 def push_status_to_prometheus(status: str, message: str = "", value: int = 1):
-    """Push a metric to Prometheus Pushgateway if enabled."""
     if not ENABLE_METRICS:
         return
-
     try:
         registry = CollectorRegistry()
         g = Gauge('backup_status', 'Status of backup job', ['status', 'message'], registry=registry)
@@ -72,10 +72,10 @@ def push_status_to_prometheus(status: str, message: str = "", value: int = 1):
             grouping_key={'instance': PROM_INSTANCE},
             registry=registry
         )
-
         logger.info(f"📊 Prometheus Push: {status} - {message} (value={value})")
     except Exception as e:
         logger.warning(f"⚠️ Failed to push to Prometheus: {e}")
+
 
 def clean_old_backups():
     try:
@@ -106,6 +106,7 @@ def clean_old_backups():
     except Exception as e:
         logger.warning(f"Could not clean old backups: {e}")
 
+
 def main():
     try:
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -132,9 +133,9 @@ def main():
                     region_name=S3_REGION,
                     aws_access_key_id=S3_ACCESS_KEY,
                     aws_secret_access_key=S3_SECRET_KEY,
-                    endpoint_url=os.getenv("S3_ENDPOINT")
+                    endpoint_url=S3_ENDPOINT
                 )
-        
+
                 s3_key = f"{S3_PREFIX}{backup_filename}"
                 s3.upload_file(backup_path, S3_BUCKET, s3_key)
                 logger.info(f"☁️  Successfully uploaded to S3: s3://{S3_BUCKET}/{s3_key}")
@@ -143,7 +144,7 @@ def main():
                 logger.exception(f"❌ S3 upload failed: {e}")
                 push_status_to_prometheus("upload_failed", str(e))
         else:
-            logger.info("☁️  S3 upload is disabled (ENABLE_S3_UPLOAD is false)")
+            logger.info("☁️  S3 upload is disabled (s3.enabled is false)")
             push_status_to_prometheus("success", "backup succeeded (no upload)")
 
         clean_old_backups()
@@ -152,6 +153,7 @@ def main():
         logger.exception(f"Error during backup: {e}")
         push_status_to_prometheus("failure", str(e))
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
