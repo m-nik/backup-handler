@@ -1,24 +1,25 @@
 # Generic Backup to S3
 
-A minimal and flexible Python script to compress any directory into a `.tar.gz` archive, upload it to an S3-compatible storage, and retain only the latest `N` backups locally.
+A minimal and flexible Python script to compress any directory into a `.tar.gz` archive, upload it to S3-compatible storage (e.g., MinIO), and retain only the latest `N` backups locally.
 
 ---
 
 ## ✨ Features
 
-- Backup any directory (configurable via `.env`)
-- Upload to any S3-compatible service (AWS, MinIO, etc.)
-- Retain last `N` local backups
-- Full logging to file and stdout
-- Simple `.env` configuration
-- Cron-friendly
+* Backup any directory (configurable via `config.ini`)
+* Upload to any S3-compatible service (e.g., MinIO, AWS)
+* Retain last `N` local backups
+* Prometheus Pushgateway monitoring support (optional)
+* Full logging to file and stdout
+* Simple INI-based configuration
+* Cron-friendly
 
 ---
 
 ## ⚙️ Requirements
 
-- Python 3.8+
-- pip packages (see `requirements.txt`)
+* Python 3.8+
+* pip packages (see `requirements.txt`)
 
 ---
 
@@ -28,82 +29,81 @@ A minimal and flexible Python script to compress any directory into a `.tar.gz` 
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-````
+```
 
 ---
 
 ## 📝 Configuration
 
-The script reads settings from a `config.ini` file in the same directory. Below is an example configuration file with explanations:
+The script reads settings from a `config.ini` file located in the same directory. Below is a sample configuration with comments:
 
 ```ini
 [backup]
-# Directory to backup (source data)
-source_dir = /path/to/data
+# Directory to back up
+source_dir = /data/to/backup
 
-# Directory to store local backup files
-backup_dir = /path/to/backups
+# Local path where backups will be stored
+backup_dir = /var/backups/myapp
 
-# Base name for backup files; timestamp and .tar.gz extension will be appended automatically
-backup_name = my_backup
+# Base name for backup files
+backup_name = myapp_backup
 
-# How many backup files to keep locally; older backups are deleted automatically
+# Number of backups to retain locally
 max_backups = 5
 
 [s3]
-# Enable uploading backups to S3-compatible storage (true/false)
+# Enable S3 upload (true/false)
 enabled = true
 
-# MinIO region (can be any string, optional)
+# S3-compatible region (e.g., us-east-1)
 region = us-east-1
 
-# S3 bucket name in MinIO
+# S3 bucket name
 bucket = my-backup-bucket
 
-# Prefix (folder path in bucket)
+# Optional prefix in bucket (folder path)
 prefix = backups/
 
-# Access credentials (from MinIO)
+# S3 Access credentials (e.g., for MinIO)
 access_key = minioadmin
 secret_key = minioadmin
 
-# MinIO endpoint URL (usually looks like this if self-hosted locally)
+# Endpoint of S3 service (e.g., MinIO)
 endpoint = http://localhost:9000
 
 [logging]
-# Path to the log file where the script writes info and errors
+# Full path to log file
 log_file = /var/log/backup_script/backup.log
 
 [metrics]
-# Enable Prometheus Pushgateway metrics reporting (true/false)
+# Enable Prometheus Pushgateway (true/false)
 enabled = true
 
-# URL of Prometheus Pushgateway (e.g., http://localhost:9091)
+# Pushgateway URL
 pushgateway_url = http://localhost:9091
 
-# Job name to use in Prometheus metrics
+# Prometheus job name
 job_name = backup_job
 
-# Instance label (usually hostname or server id)
-instance = myserver01
+# Prometheus instance label (e.g., server01)
+instance = server01
 ```
 
 ---
 
-## How It Works
+## 🚀 How It Works
 
-* The script creates a compressed tarball (`.tar.gz`) backup of the folder specified in `source_dir`.
-* Backups are saved locally in `backup_dir` with filenames like `my_backup_2025-07-31_10-00-00.tar.gz`.
-* It keeps only the latest `max_backups` files locally and deletes older backups automatically.
-* If S3 upload is enabled, it uploads the backup file to the configured S3 bucket and prefix.
-* If metrics are enabled, the script sends backup status metrics to the Prometheus Pushgateway, including success/failure, upload status, and cleanup results.
-* Logs are saved both to a file and the console for easy monitoring.
+* Compresses the folder specified in `source_dir` into a `.tar.gz` file inside `backup_dir`.
+* Keeps only the latest `max_backups` files; older ones are deleted.
+* If `[s3].enabled = true`, uploads backup to the S3 bucket at the specified path.
+* If `[metrics].enabled = true`, pushes status metrics (backup success/failure, upload, cleanup) to a Prometheus Pushgateway.
+* All logs are written to both console and the specified log file.
 
 ---
 
 ## 🛠 Usage
 
-Run the script manually:
+Run manually:
 
 ```bash
 source .venv/bin/activate
@@ -112,41 +112,42 @@ python backup.py
 
 ---
 
-## ⏰ Cron Example 
+## ⏰ Cron Example
 
-### Example cron file: `/etc/cron.d/backup`
+To schedule the backup automatically:
+
+### Example file: `/etc/cron.d/backup`
 
 ```cron
-# Weekly backup every Monday at 03:00
-0 3 * * 1 user /home/user/backup/.venv/bin/python /home/user/backup/backup.py
-````
+# Backup every day at 03:00 AM
+0 3 * * * user /path/to/venv/bin/python /path/to/backup.py
+```
 
-**Notes:**
+**Note:**
 
-* Replace `user` with the appropriate username that should run the backup.
-* Make sure the paths to the Python interpreter and the script are correct.
-* After creating the file, set the correct permissions:
+* Replace `user` with the actual system username.
+* Make sure paths are correct.
+* Give the file correct permissions:
 
 ```bash
 sudo chmod 644 /etc/cron.d/backup
 sudo chown root:root /etc/cron.d/backup
 ```
 
-* The cron daemon will automatically read this file and schedule the job.
-
 ---
 
-## 🔒 Notes
+## ✅ Best Practices & Notes
 
-* Ensure write permissions for `BACKUP_DIR` and `LOG_FILE`.
-* For S3 uploads, ensure your credentials and bucket permissions are correct.
-* Prometheus Pushgateway should be accessible from the machine running this script if metrics are enabled.
-* You can disable S3 uploads or metrics by setting `enabled = false` under the respective sections.
+* Make sure the user running the script has write access to `backup_dir` and `log_file`.
+* Check that S3 credentials and bucket policies allow uploads.
+* The Prometheus Pushgateway must be reachable from the machine running the script.
+* You can disable S3 upload or metrics by setting `enabled = false` in the corresponding section.
 
----
 ---
 
 ## 📄 License
 
 MIT
+
+---
 
