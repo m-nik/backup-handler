@@ -48,8 +48,12 @@ backup_dir = /var/backups/myapp
 # Base name for backup files
 backup_name = myapp_backup
 
-# Number of backups to retain locally
-max_backups = 5
+[retention]
+# Enable automatic deletion of old backup files (true/false)
+enable = true
+
+# Number of backup files to retain locally (only used if enable = true)
+retain_file_count = 5
 
 [s3]
 # Enable S3 upload (true/false)
@@ -94,7 +98,7 @@ instance = server01
 ## 🚀 How It Works
 
 * Compresses the folder specified in `source_dir` into a `.tar.gz` file inside `backup_dir`.
-* Keeps only the latest `max_backups` files; older ones are deleted.
+* If retention is enabled, it keeps only the latest `retain_file_count` backup files locally and deletes older ones automatically.
 * If `[s3].enabled = true`, uploads backup to the S3 bucket at the specified path.
 * If `[metrics].enabled = true`, pushes status metrics (backup success/failure, upload, cleanup) to a Prometheus Pushgateway.
 * All logs are written to both console and the specified log file.
@@ -142,6 +146,7 @@ sudo chown root:root /etc/cron.d/backup
 * Check that S3 credentials and bucket policies allow uploads.
 * The Prometheus Pushgateway must be reachable from the machine running the script.
 * You can disable S3 upload or metrics by setting `enabled = false` in the corresponding section.
+* Backup retention can be turned off by setting `[retention] enable = false`.
 
 ---
 

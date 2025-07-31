@@ -15,7 +15,10 @@ config.read("config.ini")
 SOURCE_DIR = config["backup"]["source_dir"]
 BACKUP_DIR = config["backup"].get("backup_dir", "/tmp/backups")
 BACKUP_NAME = config["backup"].get("backup_name", "backup")
-MAX_BACKUPS = int(config["backup"].get("max_backups", 5))
+
+# Retention
+RETENTION_ENABLED = config.getboolean("retention", "enable", fallback=True)
+RETAIN_FILE_COUNT = config.getint("retention", "retain_file_count", fallback=5)
 
 # Logging
 LOG_FILE = config["logging"]["log_file"]
@@ -79,18 +82,24 @@ def push_status_to_prometheus(status: str, message: str = "", value: int = 1):
 
 def clean_old_backups():
     try:
+
+        if not RETENTION_ENABLED:
+            logger.info("Backup retention is disabled; no old files will be deleted.")
+            push_status_to_prometheus("cleanup", "retention disabled", value=0)
+            return
+
         backups = sorted(
             [f for f in os.listdir(BACKUP_DIR) if f.endswith(".tar.gz")],
             key=lambda f: os.path.getmtime(os.path.join(BACKUP_DIR, f))
         )
         logger.info(f"Found {len(backups)} backup files in {BACKUP_DIR}")
 
-        if len(backups) <= MAX_BACKUPS:
+        if len(backups) <= RETAIN_FILE_COUNT:
             logger.info("No cleanup needed, within backup retention limit.")
             push_status_to_prometheus("cleanup", "no cleanup needed", value=0)
             return
 
-        to_delete = backups[:len(backups) - MAX_BACKUPS]
+        to_delete = backups[:len(backups) - RETAIN_FILE_COUNT]
         deleted_count = 0
         for f in to_delete:
             path = os.path.join(BACKUP_DIR, f)
