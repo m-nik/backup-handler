@@ -9,17 +9,29 @@ from prometheus_client import CollectorRegistry, Gauge, push_to_gateway
 
 load_dotenv()
 
+# === Configuration from .env ===
 SOURCE_DIR = os.getenv("SOURCE_DIR")
 LOG_FILE = os.getenv("LOG_FILE")
 BACKUP_DIR = os.getenv("BACKUP_DIR", "/tmp/backups")
 MAX_BACKUPS = int(os.getenv("MAX_BACKUPS", "5"))
 BACKUP_NAME = os.getenv("BACKUP_NAME", "backup")
+
+# S3 settings
+ENABLE_S3_UPLOAD = os.getenv("ENABLE_S3_UPLOAD", "false").lower() == "true"
 S3_REGION = os.getenv("S3_REGION")
 S3_BUCKET = os.getenv("S3_BUCKET")
 S3_PREFIX = os.getenv("S3_PREFIX", "")
 S3_ACCESS_KEY = os.getenv("S3_ACCESS_KEY")
 S3_SECRET_KEY = os.getenv("S3_SECRET_KEY")
 S3_ENDPOINT = os.getenv("S3_ENDPOINT")
+
+# Prometheus Pushgateway
+ENABLE_METRICS = os.getenv("ENABLE_METRICS", "false").lower() == "true"
+PUSHGATEWAY_URL = os.getenv("PUSHGATEWAY_URL")
+PROM_JOB_NAME = os.getenv("JOB_NAME", "backup_job")
+PROM_INSTANCE = os.getenv("INSTANCE", "localhost")
+
+
 
 # ==== Logging ====
 logger = logging.getLogger("generic-backup")
@@ -43,9 +55,10 @@ if not logger.hasHandlers():
     logger.addHandler(file_handler)
     logger.addHandler(console_handler)
 
+
 def push_status_to_prometheus(status: str, message: str = "", value: int = 1):
-    """Push a metric to Prometheus Pushgateway if enabled"""
-    if os.getenv("ENABLE_METRICS", "false").lower() != "true":
+    """Push a metric to Prometheus Pushgateway if enabled."""
+    if not ENABLE_METRICS:
         return
 
     try:
@@ -54,15 +67,15 @@ def push_status_to_prometheus(status: str, message: str = "", value: int = 1):
         g.labels(status=status, message=message[:100]).set(value)
 
         push_to_gateway(
-            os.getenv("PUSHGATEWAY_URL"),
-            job=os.getenv("JOB_NAME", "backup_job"),
-            grouping_key={'instance': os.getenv("INSTANCE", "localhost")},
+            PUSHGATEWAY_URL,
+            job=PROM_JOB_NAME,
+            grouping_key={'instance': PROM_INSTANCE},
             registry=registry
         )
-        logger.info(f"Pushed status to Prometheus: {status} - {message}")
-    except Exception as e:
-        logger.warning(f"Could not push to Prometheus Pushgateway: {e}")
 
+        logger.info(f"📊 Prometheus Push: {status} - {message} (value={value})")
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to push to Prometheus: {e}")
 
 def clean_old_backups():
     try:
@@ -112,23 +125,28 @@ def main():
             tar.add(SOURCE_DIR, arcname=os.path.basename(SOURCE_DIR))
         logger.info(f"Backup file created: {backup_path}")
 
-        s3 = boto3.client(
-            "s3",
-            region_name=S3_REGION,
-            aws_access_key_id=S3_ACCESS_KEY,
-            aws_secret_access_key=S3_SECRET_KEY,
-            endpoint_url=S3_ENDPOINT
-        )
-
-        s3_key = f"{S3_PREFIX}{backup_filename}"
-        s3.upload_file(backup_path, S3_BUCKET, s3_key)
-        logger.info(f"Backup uploaded to: s3://{S3_BUCKET}/{s3_key}")
+        if ENABLE_S3_UPLOAD:
+            try:
+                s3 = boto3.client(
+                    "s3",
+                    region_name=S3_REGION,
+                    aws_access_key_id=S3_ACCESS_KEY,
+                    aws_secret_access_key=S3_SECRET_KEY,
+                    endpoint_url=os.getenv("S3_ENDPOINT")
+                )
+        
+                s3_key = f"{S3_PREFIX}{backup_filename}"
+                s3.upload_file(backup_path, S3_BUCKET, s3_key)
+                logger.info(f"☁️  Successfully uploaded to S3: s3://{S3_BUCKET}/{s3_key}")
+                push_status_to_prometheus("success", "backup and upload succeeded")
+            except Exception as e:
+                logger.exception(f"❌ S3 upload failed: {e}")
+                push_status_to_prometheus("upload_failed", str(e))
+        else:
+            logger.info("☁️  S3 upload is disabled (ENABLE_S3_UPLOAD is false)")
+            push_status_to_prometheus("success", "backup succeeded (no upload)")
 
         clean_old_backups()
-
-        logger.info("Backup process completed successfully.")
-        
-        push_status_to_prometheus("success", "backup and upload succeeded")
 
     except Exception as e:
         logger.exception(f"Error during backup: {e}")

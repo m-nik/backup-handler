@@ -53,6 +53,7 @@ MAX_BACKUPS=5
 BACKUP_NAME=mydata
 
 # S3-compatible storage configuration
+ENABLE_S3_UPLOAD=true
 S3_REGION=myregion
 S3_BUCKET=my-backup-bucket
 S3_PREFIX=daily/
