@@ -91,7 +91,19 @@ job_name = backup_job
 
 # Prometheus instance label (e.g., server01)
 instance = server01
+
+# Username for Pushgateway basic auth (optional)
+username = your_username
+
+# Password for Pushgateway basic auth (optional)
+password = your_password
 ```
+
+### 📝 Notes on Metrics Authentication
+
+* The script will automatically use the provided credentials to authenticate with Pushgateway.
+* If these are omitted or left empty, authentication is disabled.
+* Ensure the credentials are correct to avoid HTTP 401 Unauthorized errors.
 
 ---
 
