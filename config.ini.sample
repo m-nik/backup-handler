@@ -1,0 +1,59 @@
+[backup]
+# Directory to back up
+source_dir = /data/to/backup
+
+# Local path where backups will be stored
+backup_dir = /var/backups/myapp
+
+# Base name for backup files
+backup_name = myapp_backup
+
+[retention]
+# Enable automatic deletion of old backup files (true/false)
+enable = true
+
+# Number of backup files to retain locally (only used if enable = true)
+retain_file_count = 5
+
+[s3]
+# Enable S3 upload (true/false)
+enabled = true
+
+# S3-compatible region (e.g., us-east-1)
+region = us-east-1
+
+# S3 bucket name
+bucket = my-backup-bucket
+
+# Optional prefix in bucket (folder path)
+prefix = backups/
+
+# S3 Access credentials (e.g., for MinIO)
+access_key = minioadmin
+secret_key = minioadmin
+
+# Endpoint of S3 service (e.g., MinIO)
+endpoint = http://localhost:9000
+
+[logging]
+# Full path to log file
+log_file = /var/log/backup_script/backup.log
+
+[metrics]
+# Enable Prometheus Pushgateway (true/false)
+enabled = true
+
+# Pushgateway URL
+pushgateway_url = http://localhost:9091
+
+# Prometheus job name
+job_name = backup_job
+
+# Prometheus instance label (e.g., server01)
+instance = server01
+
+# Username for Pushgateway basic auth (optional)
+username = your_username
+
+# Password for Pushgateway basic auth (optional)
+password = your_password
