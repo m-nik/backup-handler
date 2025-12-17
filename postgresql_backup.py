@@ -35,8 +35,11 @@ class PostgreSQLBackup:
         self.databases = cfg.get('databases', [])
         self.output_dir = cfg.get('output_dir', '/tmp/postgresql_backups')
 
+        self.logger.info(f"Initialized PostgreSQL backup for {self.host}:{self.port}, Databases: {self.databases or 'all'}")
+
     def _run_pg_dump(self, timestamp):
         """Run pg_dump command for specified databases or all if none specified"""
+        self.logger.info("Starting PostgreSQL dump...")
         os.makedirs(self.output_dir, exist_ok=True)
 
         # Set password environment variable
@@ -86,15 +89,17 @@ class PostgreSQLBackup:
 
     def run(self):
         """Run the PostgreSQL backup process"""
+        self.logger.info("Starting PostgreSQL backup process")
         if not self.enabled:
             self.logger.info("PostgreSQL backup is disabled")
             return {"status": "disabled", "message": "PostgreSQL backup is disabled"}
 
         try:
             timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            success, error, output_file = self._run_pg_dump(timestamp)
+            success, error, output_files = self._run_pg_dump(timestamp)
 
             if success:
+                self.logger.info("PostgreSQL backup completed successfully")
                 return {"status": "success", "files": output_files}
             else:
                 return {"status": "error", "message": error}

@@ -11,6 +11,9 @@ backup:
   # Base name for backup files
   backup_name: myapp_backup
 
+  # Enable file backup (true/false)
+  enabled: true
+
 retention:
   # Enable automatic deletion of old backup files (true/false)
   enable: true
@@ -41,6 +44,9 @@ s3:
 logging:
   # Full path to log file
   log_file: ./backup.log
+
+  # Logging handlers: list of 'console', 'file', or both
+  handlers: ['console', 'file']
 
 metrics:
   # Enable Prometheus Pushgateway (true/false)

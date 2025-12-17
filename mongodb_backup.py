@@ -39,8 +39,11 @@ class MongoDBBackup:
         self.auth_db = cfg.get('auth_db', 'admin')
         self.output_dir = cfg.get('output_dir', '/tmp/mongodb_backups')
 
+        self.logger.info(f"Initialized MongoDB backup for {self.host}:{self.port}, Databases: {self.databases or 'all'}")
+
     def _run_mongodump(self, timestamp):
         """Run mongodump command for specified databases or all if none specified"""
+        self.logger.info("Starting MongoDB dump...")
         os.makedirs(self.output_dir, exist_ok=True)
 
         base_cmd = ["mongodump", "--host", self.host, "--port", self.port, "--out", f"{self.output_dir}/mongodb_backup_{timestamp}"]
@@ -82,6 +85,7 @@ class MongoDBBackup:
 
     def run(self):
         """Run the MongoDB backup process"""
+        self.logger.info("Starting MongoDB backup process")
         if not self.enabled:
             self.logger.info("MongoDB backup is disabled")
             return {"status": "disabled", "message": "MongoDB backup is disabled"}
@@ -92,6 +96,7 @@ class MongoDBBackup:
 
             if success:
                 backup_path = f"{self.output_dir}/mongodb_backup_{timestamp}"
+                self.logger.info("MongoDB backup completed successfully")
                 return {"status": "success", "path": backup_path}
             else:
                 return {"status": "error", "message": error}

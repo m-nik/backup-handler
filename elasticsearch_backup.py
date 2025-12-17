@@ -38,12 +38,17 @@ class ElasticsearchBackup:
         self.repo_type = cfg.get('repository_type', 'fs')
         self.repo_settings = cfg.get('repository_settings', '{}')
 
+        self.logger.info(f"Initialized Elasticsearch backup for URL: {self.url}, Repository: {self.repository}")
+
     def _connect(self):
         """Establish connection to Elasticsearch"""
+        self.logger.info("Connecting to Elasticsearch...")
         es_kwargs = {"hosts": [self.url]}
         if self.username and self.password:
             es_kwargs["basic_auth"] = (self.username, self.password)
-        return Elasticsearch(**es_kwargs)
+        es_client = Elasticsearch(**es_kwargs)
+        self.logger.info("Connected to Elasticsearch successfully")
+        return es_client
 
     def _ensure_repository(self, es_client):
         """Create repository if it doesn't exist"""
@@ -69,10 +74,12 @@ class ElasticsearchBackup:
 
     def _create_snapshot(self, es_client):
         """Create a snapshot of specified indices or all if none specified"""
+        self.logger.info("Creating Elasticsearch snapshot...")
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         snapshot_name = f"{self.snapshot_name}_{timestamp}"
 
         indices = ",".join(self.indices) if self.indices else "_all"
+        self.logger.info(f"Snapshot indices: {indices}")
 
         try:
             es_client.snapshot.create(
@@ -93,6 +100,7 @@ class ElasticsearchBackup:
 
     def run(self):
         """Run the Elasticsearch backup process"""
+        self.logger.info("Starting Elasticsearch backup process")
         if not self.enabled:
             self.logger.info("Elasticsearch backup is disabled")
             return {"status": "disabled", "message": "Elasticsearch backup is disabled"}
@@ -101,6 +109,7 @@ class ElasticsearchBackup:
             es_client = self._connect()
             self._ensure_repository(es_client)
             snapshot_name = self._create_snapshot(es_client)
+            self.logger.info("Elasticsearch backup completed successfully")
             return {"status": "success", "snapshot": snapshot_name}
         except Exception as e:
             self.logger.exception(f"Elasticsearch backup failed: {e}")

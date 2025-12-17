@@ -27,28 +27,34 @@ BACKUP_NAME = backup_config.get('backup_name', "backup")
 # Logging
 logging_config = config.get('logging', {})
 LOG_FILE = logging_config.get('log_file')
+LOG_HANDLERS = logging_config.get('handlers', ['file'])
 
 # ==== Logging ====
 logger = logging.getLogger("generic-backup")
 logger.setLevel(logging.INFO)
 log_format = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
 
-try:
-    log_dir = os.path.dirname(LOG_FILE)
-    os.makedirs(log_dir, exist_ok=True)
-except Exception as e:
-    print(f"[FATAL] Failed to create log directory '{log_dir}': {e}")
-    sys.exit(1)
+if 'file' in LOG_HANDLERS:
+    try:
+        log_dir = os.path.dirname(LOG_FILE)
+        os.makedirs(log_dir, exist_ok=True)
+    except Exception as e:
+        print(f"[FATAL] Failed to create log directory '{log_dir}': {e}")
+        sys.exit(1)
 
-file_handler = logging.FileHandler(LOG_FILE)
-file_handler.setFormatter(log_format)
+file_handler = logging.FileHandler(LOG_FILE) if 'file' in LOG_HANDLERS else None
+if file_handler:
+    file_handler.setFormatter(log_format)
 
-console_handler = logging.StreamHandler()
-console_handler.setFormatter(log_format)
+console_handler = logging.StreamHandler() if 'console' in LOG_HANDLERS else None
+if console_handler:
+    console_handler.setFormatter(log_format)
 
 if not logger.hasHandlers():
-    logger.addHandler(file_handler)
-    logger.addHandler(console_handler)
+    if file_handler:
+        logger.addHandler(file_handler)
+    if console_handler:
+        logger.addHandler(console_handler)
 
 
 def main():
@@ -106,7 +112,7 @@ def main():
 
         # Determine selection behavior
         has_any = any([selections['all'], selections['files'], selections['es'], selections['mongodb'], selections['postgresql'], selections['mariadb']])
-        run_files = selections['all'] or selections['files'] or (not has_any)
+        run_files = (selections['all'] or selections['files'] or (not has_any)) and backup_config.get('enabled', True)
 
         # Files backup
         if run_files:

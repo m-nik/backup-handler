@@ -35,8 +35,11 @@ class MariaDBBackup:
         self.databases = cfg.get('databases', [])
         self.output_dir = cfg.get('output_dir', '/tmp/mariadb_backups')
 
+        self.logger.info(f"Initialized MariaDB backup for {self.host}:{self.port}, Databases: {self.databases or 'all'}")
+
     def _run_mysqldump(self, timestamp):
         """Run mysqldump command for specified databases or all if none specified"""
+        self.logger.info("Starting MariaDB dump...")
         os.makedirs(self.output_dir, exist_ok=True)
 
         output_files = []
@@ -83,15 +86,17 @@ class MariaDBBackup:
 
     def run(self):
         """Run the MariaDB backup process"""
+        self.logger.info("Starting MariaDB backup process")
         if not self.enabled:
             self.logger.info("MariaDB backup is disabled")
             return {"status": "disabled", "message": "MariaDB backup is disabled"}
 
         try:
             timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            success, error, output_file = self._run_mysqldump(timestamp)
+            success, error, output_files = self._run_mysqldump(timestamp)
 
             if success:
+                self.logger.info("MariaDB backup completed successfully")
                 return {"status": "success", "files": output_files}
             else:
                 return {"status": "error", "message": error}
