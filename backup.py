@@ -181,7 +181,7 @@ def main():
             postgresql_result = postgresql_backup.run()
             name = inst.get('name', inst.get('host', 'postgresql'))
             if postgresql_result["status"] == "success":
-                prometheus_pusher.update_status("postgresql_backup", f"{name}: backup to {postgresql_result['file']} succeeded", 1)
+                prometheus_pusher.update_status("postgresql_backup", f"{name}: backup to {postgresql_result['files']} succeeded", 1)
             elif postgresql_result["status"] == "disabled":
                 prometheus_pusher.update_status("postgresql_backup", f"{name}: disabled")
             else:
@@ -195,7 +195,7 @@ def main():
             mariadb_result = mariadb_backup.run()
             name = inst.get('name', inst.get('host', 'mariadb'))
             if mariadb_result["status"] == "success":
-                prometheus_pusher.update_status("mariadb_backup", f"{name}: backup to {mariadb_result['file']} succeeded", 1)
+                prometheus_pusher.update_status("mariadb_backup", f"{name}: backup to {mariadb_result['files']} succeeded", 1)
             elif mariadb_result["status"] == "disabled":
                 prometheus_pusher.update_status("mariadb_backup", f"{name}: disabled")
             else:
