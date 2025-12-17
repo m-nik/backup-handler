@@ -56,6 +56,14 @@ if not logger.hasHandlers():
     if console_handler:
         logger.addHandler(console_handler)
 
+# Also add handlers to root logger so all loggers can use them
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+if file_handler and file_handler not in root_logger.handlers:
+    root_logger.addHandler(file_handler)
+if console_handler and console_handler not in root_logger.handlers:
+    root_logger.addHandler(console_handler)
+
 
 def main():
     parser = argparse.ArgumentParser(description="Backup runner. Select targets to back up.")
