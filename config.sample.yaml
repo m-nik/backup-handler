@@ -70,6 +70,7 @@ elasticsearch:
       url: http://localhost:9200
       repository: my_backup_repo
       snapshot_name: elasticsearch_backup
+      indices: []
       username: ""
       password: ""
       repository_type: fs
@@ -83,7 +84,7 @@ mongodb:
       port: 27017
       username: ""
       password: ""
-      database: ""
+      databases: []
       auth_db: admin
       output_dir: /tmp/mongodb_backups
 
@@ -95,7 +96,7 @@ postgresql:
       port: 5432
       username: ""
       password: ""
-      database: ""
+      databases: []
       output_dir: /tmp/postgresql_backups
 
 mariadb:
@@ -106,5 +107,4 @@ mariadb:
       port: 3306
       username: ""
       password: ""
-      database: ""
-      output_dir: /tmp/mariadb_backups
+      databases: []
