@@ -9,7 +9,7 @@ from elasticsearch import Elasticsearch
 class ElasticsearchBackup:
     def __init__(self, config_file=None, instance: dict = None):
         """Accept instance dict or load legacy config and pick first instance.
-        Instance dict keys: name, enabled, url, repository, snapshot_name, username, password, repository_type, repository_settings
+        Instance dict keys: name, enabled, url, repository, snapshot_name, indices, username, password, repository_type, repository_settings
         """
         self.logger = logging.getLogger("elasticsearch-backup")
 
@@ -32,6 +32,7 @@ class ElasticsearchBackup:
         self.url = cfg.get('url', 'http://localhost:9200')
         self.repository = cfg.get('repository', 'backup_repo')
         self.snapshot_name = cfg.get('snapshot_name', 'es_backup')
+        self.indices = cfg.get('indices', [])
         self.username = cfg.get('username')
         self.password = cfg.get('password')
         self.repo_type = cfg.get('repository_type', 'fs')
@@ -67,22 +68,24 @@ class ElasticsearchBackup:
             raise
 
     def _create_snapshot(self, es_client):
-        """Create a snapshot of all indices"""
+        """Create a snapshot of specified indices or all if none specified"""
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         snapshot_name = f"{self.snapshot_name}_{timestamp}"
+
+        indices = ",".join(self.indices) if self.indices else "_all"
 
         try:
             es_client.snapshot.create(
                 repository=self.repository,
                 snapshot=snapshot_name,
                 body={
-                    "indices": "_all",
+                    "indices": indices,
                     "ignore_unavailable": True,
                     "include_global_state": False
                 },
                 wait_for_completion=True
             )
-            self.logger.info(f"Elasticsearch snapshot created: {snapshot_name}")
+            self.logger.info(f"Elasticsearch snapshot created: {snapshot_name} for indices: {indices}")
             return snapshot_name
         except Exception as e:
             self.logger.error(f"Failed to create snapshot: {e}")

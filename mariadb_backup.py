@@ -8,7 +8,7 @@ import logging
 class MariaDBBackup:
     def __init__(self, config_file=None, instance: dict = None):
         """Accept an instance dict (preferred) or load legacy config.yaml and pick first instance.
-        Instance dict keys: name, enabled, host, port, username, password, database, output_dir
+        Instance dict keys: name, enabled, host, port, username, password, databases, output_dir
         """
         self.logger = logging.getLogger("mariadb-backup")
 
@@ -32,38 +32,54 @@ class MariaDBBackup:
         self.port = str(cfg.get('port', '3306'))
         self.username = cfg.get('username')
         self.password = cfg.get('password')
-        self.database = cfg.get('database')
+        self.databases = cfg.get('databases', [])
         self.output_dir = cfg.get('output_dir', '/tmp/mariadb_backups')
 
     def _run_mysqldump(self, timestamp):
-        """Run mysqldump command"""
+        """Run mysqldump command for specified databases or all if none specified"""
         os.makedirs(self.output_dir, exist_ok=True)
 
-        if self.database:
-            # Backup specific database
-            output_file = f"{self.output_dir}/mariadb_{self.database}_{timestamp}.sql"
-            cmd = ["mysqldump", f"--host={self.host}", f"--port={self.port}", f"--user={self.username}",
-                   f"--password={self.password}", "--single-transaction", "--routines", "--triggers",
-                   "--result-file", output_file, self.database]
+        output_files = []
+
+        if self.databases:
+            # Backup specific databases
+            for db in self.databases:
+                output_file = f"{self.output_dir}/mariadb_{db}_{timestamp}.sql"
+                cmd = ["mysqldump", f"--host={self.host}", f"--port={self.port}", f"--user={self.username}",
+                       f"--password={self.password}", "--single-transaction", "--routines", "--triggers",
+                       "--result-file", output_file, db]
+                try:
+                    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                    self.logger.info(f"MariaDB dump completed for database: {db}")
+                    output_files.append(output_file)
+                except subprocess.CalledProcessError as e:
+                    error_msg = f"mysqldump failed for {db}: {e.stderr}"
+                    self.logger.error(error_msg)
+                    return False, error_msg, None
+                except FileNotFoundError:
+                    error_msg = "mysqldump command not found. Please install MariaDB/MySQL client tools."
+                    self.logger.error(error_msg)
+                    return False, error_msg, None
         else:
             # Backup all databases
             output_file = f"{self.output_dir}/mariadb_all_{timestamp}.sql"
             cmd = ["mysqldump", f"--host={self.host}", f"--port={self.port}", f"--user={self.username}",
                    f"--password={self.password}", "--single-transaction", "--routines", "--triggers",
                    "--all-databases", "--result-file", output_file]
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                self.logger.info("MariaDB dump completed for all databases")
+                output_files.append(output_file)
+            except subprocess.CalledProcessError as e:
+                error_msg = f"mysqldump failed: {e.stderr}"
+                self.logger.error(error_msg)
+                return False, error_msg, None
+            except FileNotFoundError:
+                error_msg = "mysqldump command not found. Please install MariaDB/MySQL client tools."
+                self.logger.error(error_msg)
+                return False, error_msg, None
 
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            self.logger.info("MariaDB dump completed successfully")
-            return True, None, output_file
-        except subprocess.CalledProcessError as e:
-            error_msg = f"mysqldump failed: {e.stderr}"
-            self.logger.error(error_msg)
-            return False, error_msg, None
-        except FileNotFoundError:
-            error_msg = "mysqldump command not found. Please install MariaDB/MySQL client tools."
-            self.logger.error(error_msg)
-            return False, error_msg, None
+        return True, None, output_files
 
     def run(self):
         """Run the MariaDB backup process"""
@@ -76,7 +92,7 @@ class MariaDBBackup:
             success, error, output_file = self._run_mysqldump(timestamp)
 
             if success:
-                return {"status": "success", "file": output_file}
+                return {"status": "success", "files": output_files}
             else:
                 return {"status": "error", "message": error}
         except Exception as e:

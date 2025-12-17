@@ -8,7 +8,7 @@ import logging
 class MongoDBBackup:
     def __init__(self, config_file=None, instance: dict = None):
         """If `instance` dict is provided use it, otherwise load defaults from config.yaml.
-        Instance dict should include keys: name, enabled, host, port, username, password, database, auth_db, output_dir
+        Instance dict should include keys: name, enabled, host, port, username, password, databases, auth_db, output_dir
         """
         self.logger = logging.getLogger("mongodb-backup")
 
@@ -35,34 +35,50 @@ class MongoDBBackup:
         self.port = str(cfg.get('port', '27017'))
         self.username = cfg.get('username')
         self.password = cfg.get('password')
-        self.database = cfg.get('database')
+        self.databases = cfg.get('databases', [])
         self.auth_db = cfg.get('auth_db', 'admin')
         self.output_dir = cfg.get('output_dir', '/tmp/mongodb_backups')
 
     def _run_mongodump(self, timestamp):
-        """Run mongodump command"""
+        """Run mongodump command for specified databases or all if none specified"""
         os.makedirs(self.output_dir, exist_ok=True)
 
-        cmd = ["mongodump", "--host", self.host, "--port", self.port, "--out", f"{self.output_dir}/mongodb_backup_{timestamp}"]
+        base_cmd = ["mongodump", "--host", self.host, "--port", self.port, "--out", f"{self.output_dir}/mongodb_backup_{timestamp}"]
 
         if self.username and self.password:
-            cmd.extend(["--username", self.username, "--password", self.password, "--authenticationDatabase", self.auth_db])
+            base_cmd.extend(["--username", self.username, "--password", self.password, "--authenticationDatabase", self.auth_db])
 
-        if self.database:
-            cmd.extend(["--db", self.database])
+        if self.databases:
+            # Dump specific databases
+            for db in self.databases:
+                cmd = base_cmd + ["--db", db]
+                try:
+                    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                    self.logger.info(f"MongoDB dump completed for database: {db}")
+                except subprocess.CalledProcessError as e:
+                    error_msg = f"mongodump failed for {db}: {e.stderr}"
+                    self.logger.error(error_msg)
+                    return False, error_msg
+                except FileNotFoundError:
+                    error_msg = "mongodump command not found. Please install MongoDB tools."
+                    self.logger.error(error_msg)
+                    return False, error_msg
+        else:
+            # Dump all databases
+            cmd = base_cmd
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                self.logger.info("MongoDB dump completed for all databases")
+            except subprocess.CalledProcessError as e:
+                error_msg = f"mongodump failed: {e.stderr}"
+                self.logger.error(error_msg)
+                return False, error_msg
+            except FileNotFoundError:
+                error_msg = "mongodump command not found. Please install MongoDB tools."
+                self.logger.error(error_msg)
+                return False, error_msg
 
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            self.logger.info("MongoDB dump completed successfully")
-            return True, None
-        except subprocess.CalledProcessError as e:
-            error_msg = f"mongodump failed: {e.stderr}"
-            self.logger.error(error_msg)
-            return False, error_msg
-        except FileNotFoundError:
-            error_msg = "mongodump command not found. Please install MongoDB tools."
-            self.logger.error(error_msg)
-            return False, error_msg
+        return True, None
 
     def run(self):
         """Run the MongoDB backup process"""
