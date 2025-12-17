@@ -16,3 +16,4 @@ venv/
 
 .env
 config.ini
+config.yaml
