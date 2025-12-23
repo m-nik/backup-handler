@@ -54,7 +54,7 @@ class PostgreSQLBackup:
             for db in self.databases:
                 output_file = f"{self.output_dir}/postgresql_{db}_{timestamp}.sql"
                 cmd = ["pg_dump", "--host", self.host, "--port", self.port, "--username", self.username,
-                       "--format", "c", "--compress", "9", "--file", output_file, db]
+                       "--format", "p", "--file", output_file, db]
                 try:
                     result = subprocess.run(cmd, env=env, capture_output=True, text=True, check=True)
                     self.logger.info(f"PostgreSQL dump completed for database: {db}")

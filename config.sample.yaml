@@ -48,6 +48,24 @@ logging:
   # Logging handlers: list of 'console', 'file', or both
   handlers: ['console', 'file']
 
+compression:
+  # Enable compression (true/false)
+  enabled: true
+
+  # Compression method: zstd, gzip, bzip2, xz
+  method: zstd
+
+  # Compression level (1-22 for zstd, 1-9 for others)
+  level: 3
+
+  # Encryption settings (sub-section of compression)
+  encryption:
+    # Enable encryption (true/false)
+    enabled: true
+
+    # Encryption key (plain text in config)
+    key: "your_secret_key_here"
+
 metrics:
   # Enable Prometheus Pushgateway (true/false)
   enabled: true
@@ -82,35 +100,39 @@ elasticsearch:
       repository_type: fs
       repository_settings: {"location": "/var/backups/es"}
 
+postgresql:
+  instances:
+    - name: local
+      enabled: false
+      enabled_compression: true
+      host: localhost
+      port: 5432
+      username: ""
+      password: ""
+      databases: []
+      output_dir: ./backups
+
 mongodb:
   instances:
     - name: local
       enabled: false
+      enabled_compression: true
       host: localhost
       port: 27017
       username: ""
       password: ""
       databases: []
       auth_db: admin
-      output_dir: /tmp/mongodb_backups
-
-postgresql:
-  instances:
-    - name: local
-      enabled: false
-      host: localhost
-      port: 5432
-      username: ""
-      password: ""
-      databases: []
-      output_dir: /tmp/postgresql_backups
+      output_dir: ./backups
 
 mariadb:
   instances:
     - name: local
       enabled: false
+      enabled_compression: true
       host: localhost
       port: 3306
       username: ""
       password: ""
       databases: []
+      output_dir: ./backups
