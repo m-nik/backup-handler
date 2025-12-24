@@ -1,10 +1,6 @@
 import os
 import subprocess
-import tempfile
 import logging
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.backends import default_backend
-import base64
 import yaml
 
 
@@ -55,23 +51,6 @@ class CompressionEncryption:
         except FileNotFoundError:
             self.logger.error(f"Compression tool {self.compression_method} not found")
             return False
-
-    def _encrypt_file(self, input_file, output_file):
-        """Encrypt input_file to output_file using AES-256 compatible with openssl"""
-        key = os.getenv(self.encryption_key_env)
-        if not key:
-            self.logger.warning(f"Encryption key not found in environment variable {self.encryption_key_env}, skipping encryption")
-            return input_file
-
-        # Use openssl command for compatibility
-        cmd = ['openssl', 'enc', '-aes-256-cbc', '-salt', '-in', input_file, '-out', output_file, '-k', key]
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            self.logger.info(f"Encrypted {input_file} to {output_file} using openssl")
-            return output_file
-        except subprocess.CalledProcessError as e:
-            self.logger.error(f"openssl encryption failed: {e.stderr}")
-            return input_file
 
     def process_file(self, input_file, enabled_compression=False):
         """Process file: compress and encrypt using 7z if enabled. Returns final output file path."""
