@@ -176,8 +176,8 @@ def main():
                     # If path is a directory, create a tar archive first
                     backup_path = mongodb_result['path']
                     if os.path.isdir(backup_path):
-                        tar_path = backup_path + '.tar.gz'
-                        with tarfile.open(tar_path, "w:gz") as tar:
+                        tar_path = backup_path + '.tar'
+                        with tarfile.open(tar_path, "w") as tar:
                             tar.add(backup_path, arcname=os.path.basename(backup_path))
                         # Remove the directory after archiving
                         import shutil
