@@ -2,7 +2,7 @@ import os
 import subprocess
 import logging
 import yaml
-
+import shutil
 
 class CompressionEncryption:
     def __init__(self, config_file=None):
@@ -71,6 +71,10 @@ class CompressionEncryption:
             result = subprocess.run(cmd, capture_output=True, text=True, check=True)
             self.logger.info(f"Compressed and encrypted {input_file} to {output_file} using 7z")
             # Remove original file
+            if os.path.isfile(input_file):
+                os.remove(input_file)
+            elif os.path.isdir(input_file):
+                shutil.rmtree(input_file)
             os.remove(input_file)
             return output_file
         except subprocess.CalledProcessError as e:
