@@ -13,6 +13,7 @@ from elasticsearch_backup import ElasticsearchBackup
 from mongodb_backup import MongoDBBackup
 from postgresql_backup import PostgreSQLBackup
 from mariadb_backup import MariaDBBackup
+import shutil
 
 # === Load config.yaml ===
 config_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.yaml")
@@ -186,6 +187,14 @@ def main():
                     # Process compression/encryption
                     enabled_compression = inst.get('enabled_compression', False)
                     final_file = compression_encryption.process_file(backup_path, enabled_compression)
+
+                    # Remove original file(s)
+                    if os.path.isfile(backup_path):
+                        os.remove(backup_path)
+                    elif os.path.isdir(backup_path):
+                        shutil.rmtree(backup_path)
+                    os.remove(backup_path)
+
                     # Upload to S3 if file changed
                     if final_file != backup_path:
                         s3_result = s3_uploader.upload(final_file, os.path.basename(final_file))
@@ -216,6 +225,10 @@ def main():
                     for file_path in postgresql_result['files']:
                         enabled_compression = inst.get('enabled_compression', False)
                         final_file = compression_encryption.process_file(file_path, enabled_compression)
+                        
+                        # Remove original file(s)
+                        os.remove(file_path)
+
                         # Upload to S3 if file changed
                         if final_file != file_path:
                             s3_result = s3_uploader.upload(final_file, os.path.basename(final_file))
@@ -246,6 +259,10 @@ def main():
                     for file_path in mariadb_result['files']:
                         enabled_compression = inst.get('enabled_compression', False)
                         final_file = compression_encryption.process_file(file_path, enabled_compression)
+
+                        # Remove original file(s)
+                        os.remove(file_path)
+
                         # Upload to S3 if file changed
                         if final_file != file_path:
                             s3_result = s3_uploader.upload(final_file, os.path.basename(final_file))
