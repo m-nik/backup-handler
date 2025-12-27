@@ -18,7 +18,7 @@ class CompressionEncryption:
 
         compression_config = config.get('compression', {})
         self.compression_enabled = compression_config.get('enabled', False)
-        # self.compression_method = compression_config.get('method', '7z')
+        self.compression_method = compression_config.get('method', '7z')
         self.compression_level = compression_config.get('level', 3)
 
         encryption_config = compression_config.get('encryption', {})
