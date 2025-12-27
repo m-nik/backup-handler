@@ -193,7 +193,6 @@ def main():
                         os.remove(backup_path)
                     elif os.path.isdir(backup_path):
                         shutil.rmtree(backup_path)
-                    os.remove(backup_path)
 
                     # Upload to S3 if file changed
                     if final_file != backup_path:
