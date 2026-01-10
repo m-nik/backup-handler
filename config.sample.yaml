@@ -14,6 +14,9 @@ backup:
   # Enable file backup (true/false)
   enabled: true
 
+  # Delete source folder
+  delete_source_files: false
+
 retention:
   # Enable automatic deletion of old backup files (true/false)
   enable: true

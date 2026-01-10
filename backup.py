@@ -25,6 +25,7 @@ backup_config = config.get('backup', {})
 SOURCE_DIR = backup_config.get('source_dir')
 BACKUP_DIR = backup_config.get('backup_dir', "/tmp/backups")
 BACKUP_NAME = backup_config.get('backup_name', "backup")
+BACKUP_DELETE_SOURCE_FILE = backup_config.get('delete_source_files', False)
 
 # Logging
 logging_config = config.get('logging', {})
@@ -148,6 +149,26 @@ def main():
                 prometheus_pusher.update_status("upload", "S3 upload is disabled")
             else:
                 prometheus_pusher.update_status("upload", s3_result["message"])
+
+            # Remove source files
+            if BACKUP_DELETE_SOURCE_FILE:
+              if os.path.exists(SOURCE_DIR) and os.path.isdir(SOURCE_DIR):
+                  files = os.listdir(SOURCE_DIR)
+
+                  for file in files:
+                      file_path = os.path.join(SOURCE_DIR, file)
+                      try:
+                          if os.path.isfile(file_path):
+                              os.remove(file_path)
+                              print(f"File '{file}' removed")
+                          elif os.path.isdir(file_path):
+                              shutil.rmtree(file_path)
+                              print(f"Directory '{file}' removed")
+                      except Exception as e:
+                          print(f"Error in removing '{file}': {e}")
+              else:
+                  print(f"Dir '{SOURCE_DIR}' invalid")
+
 
         # Database backups: for each type, determine instance selectors and run per-instance
         # Elasticsearch
