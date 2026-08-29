@@ -603,6 +603,11 @@ Check `./backup.log` for detailed error messages. Logs include timestamps and er
 ---
 
 
+## TODO
+- فقط از 7z استفاده می کنیم. آپدیت کد و کانفیگ
+- آپدیت Readme حذف zstd
+- پستگرس بدون توجه به enabled ساخته می شود
+
 ## Contribute
 
 https://github.com/m-nik/backup-handler
