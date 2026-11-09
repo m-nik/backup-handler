@@ -45,19 +45,18 @@ class PrometheusPusher:
             for (status, message), value in self.status_dict.items():
                 g.labels(status=status, message=message).set(value)
 
+            push_kwargs = {
+                "job": self.job_name,
+                "grouping_key": {'instance': self.instance},
+                "registry": registry,
+            }
+
             if self.username and self.password:
                 def handler(url, method, timeout, headers, data):
                     return basic_auth_handler(url, method, timeout, headers, data, self.username, self.password)
-            else:
-                handler = None
+                push_kwargs["handler"] = handler
 
-            push_to_gateway(
-                self.pushgateway_url,
-                job=self.job_name,
-                grouping_key={'instance': self.instance},
-                registry=registry,
-                handler=handler
-            )
+            push_to_gateway(self.pushgateway_url, **push_kwargs)
             self.logger.info(f"Prometheus Push: pushed {len(self.status_dict)} statuses")
             self.status_dict.clear()
             return {"status": "success", "count": len(self.status_dict)}

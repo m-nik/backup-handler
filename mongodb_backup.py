@@ -42,46 +42,53 @@ class MongoDBBackup:
         self.logger.info(f"Initialized MongoDB backup for {self.host}:{self.port}, Databases: {self.databases or 'all'}")
 
     def _run_mongodump(self, timestamp):
-        """Run mongodump command for specified databases or all if none specified"""
+        """Run mongodump for each database into its own output directory.
+        Returns (True, [dirs]) on success or (False, error) on failure."""
         self.logger.info("Starting MongoDB dump...")
         os.makedirs(self.output_dir, exist_ok=True)
 
-        base_cmd = ["mongodump", "--host", self.host, "--port", self.port, "--out", f"{self.output_dir}/mongodb_backup_{timestamp}"]
+        base_cmd = ["mongodump", "--host", self.host, "--port", self.port]
 
         if self.username and self.password:
             base_cmd.extend(["--username", self.username, "--password", self.password, "--authenticationDatabase", self.auth_db])
 
+        output_dirs = []
+
         if self.databases:
-            # Dump specific databases
+            # Dump each database into its own directory
             for db in self.databases:
-                cmd = base_cmd + ["--db", db]
+                out_dir = os.path.join(self.output_dir, f"mongodb_{db}_{timestamp}")
+                cmd = base_cmd + ["--db", db, "--out", out_dir]
                 try:
-                    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                    subprocess.run(cmd, capture_output=True, text=True, check=True)
                     self.logger.info(f"MongoDB dump completed for database: {db}")
+                    output_dirs.append(out_dir)
                 except subprocess.CalledProcessError as e:
                     error_msg = f"mongodump failed for {db}: {e.stderr}"
                     self.logger.error(error_msg)
-                    return False, error_msg
+                    return False, error_msg, None
                 except FileNotFoundError:
                     error_msg = "mongodump command not found. Please install MongoDB tools."
                     self.logger.error(error_msg)
-                    return False, error_msg
+                    return False, error_msg, None
         else:
-            # Dump all databases
-            cmd = base_cmd
+            # Dump all databases into one directory
+            out_dir = os.path.join(self.output_dir, f"mongodb_backup_{timestamp}")
+            cmd = base_cmd + ["--out", out_dir]
             try:
-                result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                subprocess.run(cmd, capture_output=True, text=True, check=True)
                 self.logger.info("MongoDB dump completed for all databases")
+                output_dirs.append(out_dir)
             except subprocess.CalledProcessError as e:
                 error_msg = f"mongodump failed: {e.stderr}"
                 self.logger.error(error_msg)
-                return False, error_msg
+                return False, error_msg, None
             except FileNotFoundError:
                 error_msg = "mongodump command not found. Please install MongoDB tools."
                 self.logger.error(error_msg)
-                return False, error_msg
+                return False, error_msg, None
 
-        return True, None
+        return True, None, output_dirs
 
     def run(self):
         """Run the MongoDB backup process"""
@@ -92,12 +99,11 @@ class MongoDBBackup:
 
         try:
             timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            success, error = self._run_mongodump(timestamp)
+            success, error, output_dirs = self._run_mongodump(timestamp)
 
             if success:
-                backup_path = f"{self.output_dir}/mongodb_backup_{timestamp}"
                 self.logger.info("MongoDB backup completed successfully")
-                return {"status": "success", "path": backup_path}
+                return {"status": "success", "dirs": output_dirs}
             else:
                 return {"status": "error", "message": error}
         except Exception as e:

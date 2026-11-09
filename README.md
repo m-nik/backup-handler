@@ -1,61 +1,67 @@
 # Backup Handler
 
-A modular Python script for backing up databases (PostgreSQL, MongoDB, MariaDB, Elasticsearch) and files to local storage with optional S3 upload, compression, encryption, and Prometheus monitoring.
+A modular Python tool that backs up databases (PostgreSQL, MongoDB, MariaDB, SQL Server, Elasticsearch) and files/folders, compresses and encrypts them with 7z, uploads them to S3-compatible storage (e.g. MinIO), and reports the result to Prometheus.
 
----
-## 🔧 Troubleshooting
+In one sentence: you configure it once, put it in cron, and every night you get one encrypted `.7z` archive per database in your S3 bucket, with monitoring and old-backup cleanup included.
 
-### Common Issues
-
-* **7z not found**: Install `p7zip-full` (`apt install p7zip-full` on Ubuntu)
-* **Database connection failed**: Check host, port, credentials in config.yaml
-* **S3 upload failed**: Verify endpoint, access keys, bucket permissions
-* **Encryption key missing**: Ensure `key` is set in `compression.encryption` section
-* **Permission denied**: Run with appropriate user permissions for backup directories
-
-### Logs
-
-Check `./backup.log` for detailed error messages. Logs include timestamps and error details.
-
----
+```
+config.yaml ──▶ backup.py ──▶ pg_dump / mongodump / mysqldump / sqlpackage / ES API
+                                  │
+                                  ▼
+                        .sql / dump dir / .bacpac  (per database, in output_dir)
+                                  │
+                                  ▼
+                            7z compress + encrypt (AES-256)
+                                  │
+                                  ▼
+                         upload to MinIO/S3, delete local copy
+                                  │
+                                  ▼
+                    status push to Prometheus Pushgateway
+```
 
 ## ✨ Features
 
-* Modular backup for multiple database types (PostgreSQL, MongoDB, MariaDB, Elasticsearch)
+* Modular backup for multiple database types (PostgreSQL, MongoDB, MariaDB, SQL Server, Elasticsearch)
+* Multiple named instances per database type, each with its own credentials and settings
 * File/directory backup support
-* Compression using zstd, gzip, bzip2, or xz
-* Encryption using 7z AES-256
+* Compression and encryption using 7z (AES-256)
 * Upload to S3-compatible storage (e.g., MinIO, AWS)
-* Retention policy for local backups
+* Per-instance compression toggle (`enabled_compression`)
+* Retention policy for local file backups and Elasticsearch snapshots
 * Prometheus Pushgateway monitoring
 * Full logging to file and console
 * YAML-based configuration
 * CLI with per-instance control
 * Cron-friendly
 
----
-## 🔧 Troubleshooting
+## 📁 Repository Structure — what every file does
 
-### Common Issues
+| File | Role |
+|------|------|
+| `backup.py` | **Entry point.** Reads `config.yaml`, parses CLI arguments, runs the selected backups, then routes every produced file through compress → upload → cleanup and collects statuses for Prometheus. Everything else is imported by this file. |
+| `postgresql_backup.py` | PostgreSQL backup module. Runs `pg_dump` per database (or `pg_dumpall` for all), one `.sql` file per database into the instance `output_dir`. |
+| `mongodb_backup.py` | MongoDB backup module. Runs `mongodump` per database, each into its own directory (`mongodb_<db>_<timestamp>`), or one combined directory in all-databases mode. |
+| `mariadb_backup.py` | MariaDB/MySQL backup module. Runs `mysqldump` per database (`--single-transaction --routines --triggers`), one `.sql` file per database. |
+| `sqlserver_backup.py` | SQL Server backup module. Runs `sqlpackage /Action:Export` per database, producing one `.bacpac` file per database. |
+| `elasticsearch_backup.py` | Elasticsearch backup module. Talks to the ES API: creates the snapshot repository if missing, takes a snapshot of the configured indices, and prunes old snapshots (`retain_snapshot_count`). Supports `fs` and `s3` repository types. |
+| `compression_encryption.py` | Turns a dump file/directory into a single password-protected `.7z` archive (AES-256) using the key and level from the `compression` section. |
+| `s3_upload.py` | Uploads a file to S3-compatible storage via boto3 (bucket, prefix, endpoint from the `s3` section). |
+| `backup_cleaner.py` | Retention for local *file* backups: keeps only the N newest `.tar.gz` files in `backup_dir` (`retention` section). Database dumps are removed right after upload and are not affected. |
+| `prometheus_push.py` | Collects statuses during the run (backup ok/failed, upload ok, ...) and pushes them as the `backup_status` gauge to a Prometheus Pushgateway at the end. |
+| `config.sample.yaml` | Complete, commented reference of every configuration option. Copy it to `config.yaml` to get started. |
+| `requirements.txt` | Python dependencies (boto3, prometheus-client, elasticsearch, PyYAML). |
+| `pgdump-backup.sh` | Legacy standalone shell script (docker `pg_dumpall` + 7z) kept from an earlier setup. Not used by `backup.py`. |
+| `docs/` | (optional) extra guides. |
 
-* **7z not found**: Install `p7zip-full` (`apt install p7zip-full` on Ubuntu)
-* **Database connection failed**: Check host, port, credentials in config.yaml
-* **S3 upload failed**: Verify endpoint, access keys, bucket permissions
-* **Encryption key missing**: Ensure `key` is set in `compression.encryption` section
-* **Permission denied**: Run with appropriate user permissions for backup directories
-
-### Logs
-
-Check `./backup.log` for detailed error messages. Logs include timestamps and error details.
-
----
+Each `*_backup.py` module has the same shape: it takes an instance dict, exposes a `run()` method that returns `{"status": "success"|"error"|"disabled", ...}`, and can also be executed standalone for quick tests (`python3 postgresql_backup.py`). This makes it straightforward to add a new database type: copy one module, adjust the dump command, and wire it into `backup.py`.
 
 ## ⚙️ Requirements
 
 * Python 3.8+
 * pip packages (see `requirements.txt`)
-* Database clients: `pg_dump` (postgresql-client), `mongodump` (mongodb-tools), `mysqldump` (mariadb-client), `elasticsearch-dump` (npm install -g @elastic/elasticsearch-dump)
-* Compression tools: `zstd`, `gzip`, `bzip2`, `xz`, `7z` (p7zip-full)
+* Database clients: `pg_dump` (postgresql-client), `mongodump` (mongodb-tools), `mysqldump` (mariadb-client), `sqlpackage` (see [SQL Server](#sql-server))
+* Compression/encryption: `7z` (p7zip-full)
 
 ### System Dependencies Installation (Ubuntu/Debian)
 
@@ -67,32 +73,24 @@ sudo apt update
 sudo apt install postgresql-client mongodb-tools mariadb-client
 
 # Install compression tools
-sudo apt install zstd gzip bzip2 xz-utils p7zip-full
-
-# Install Node.js for elasticsearch-dump (optional)
-curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-sudo apt-get install -y nodejs
-npm install -g @elastic/elasticsearch-dump
+sudo apt install p7zip-full
 ```
 
-* For S3: `boto3` (included in requirements.txt)
+### SQL Server
 
----
-## 🔧 Troubleshooting
+SQL Server backups use `sqlpackage` which must be installed on the machine running this tool:
 
-### Common Issues
+```bash
+sudo mkdir -p /opt/sqlpackage && cd /opt/sqlpackage
+sudo curl -sL https://go.microsoft.com/fwlink/?linkid=2316314 -o sqlpackage.zip
+sudo unzip sqlpackage.zip && sudo chmod +x sqlpackage
+sudo ln -sf /opt/sqlpackage/sqlpackage /usr/local/bin/sqlpackage
+```
 
-* **7z not found**: Install `p7zip-full` (`apt install p7zip-full` on Ubuntu)
-* **Database connection failed**: Check host, port, credentials in config.yaml
-* **S3 upload failed**: Verify endpoint, access keys, bucket permissions
-* **Encryption key missing**: Ensure `key` is set in `compression.encryption` section
-* **Permission denied**: Run with appropriate user permissions for backup directories
-
-### Logs
-
-Check `./backup.log` for detailed error messages. Logs include timestamps and error details.
-
----
+Notes:
+* `sqlpackage` cannot export all databases at once — every instance must list its databases explicitly.
+* `sqlpackage` requires .NET runtime; the standalone zip for Linux x64 bundles what it needs.
+* Orphaned database users (users without a matching server login, e.g. leftovers from a dev restore) make the export fail with `Error SQL71564`. Fix them on the server (`DROP USER`, or `ALTER USER ... WITH LOGIN = ...`) before backing up.
 
 ## 📦 Installation
 
@@ -102,248 +100,142 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
----
-## 🔧 Troubleshooting
-
-### Common Issues
-
-* **7z not found**: Install `p7zip-full` (`apt install p7zip-full` on Ubuntu)
-* **Database connection failed**: Check host, port, credentials in config.yaml
-* **S3 upload failed**: Verify endpoint, access keys, bucket permissions
-* **Encryption key missing**: Ensure `key` is set in `compression.encryption` section
-* **Permission denied**: Run with appropriate user permissions for backup directories
-
-### Logs
-
-Check `./backup.log` for detailed error messages. Logs include timestamps and error details.
-
----
-
 ## 📝 Configuration
 
-Copy `config.sample.yaml` to `config.yaml` and edit the settings as needed. The script reads settings from `config.yaml`. Below is a sample configuration with all options:
+Copy `config.sample.yaml` to `config.yaml` (next to `backup.py`) and edit it. A minimal but realistic example:
 
 ```yaml
-backup:
-  source_dir: /data/to/backup
-  backup_dir: ./backups
-  backup_name: myapp_backup
-  enabled: false
-
-retention:
-  enable: false
-  retain_file_count: 5
-
 s3:
-  enabled: false
+  enabled: true
   region: us-east-1
   bucket: my-backup-bucket
-  prefix: backups/
+  prefix: myapp/
   access_key: minioadmin
   secret_key: minioadmin
-  endpoint: http://localhost:9000
+  endpoint: http://minio.local:9000
 
 logging:
   log_file: ./backup.log
   handlers: ['console', 'file']
 
 compression:
-  enabled: false
-  method: zstd
+  enabled: true
   level: 3
   encryption:
-    enabled: false
-    key: "your_secret_key_here"
+    enabled: true
+    key: "a-long-random-secret"
 
 metrics:
-  enabled: false
-  pushgateway_url: http://localhost:9091
+  enabled: true
+  pushgateway_url: http://prom-push.local:9091
   job_name: backup_job
   instance: server01
-  username: your_username
-  password: your_password
 
 postgresql:
   instances:
-    - name: my-pg
-      enabled: false
+    - name: main-pg
+      enabled: true
       enabled_compression: true
-      host: localhost
+      host: db.local
       port: 5432
-      username: ""
-      password: ""
-      databases: []
-      output_dir: ./backups
-
-mongodb:
-  instances:
-    - name: my-mongo
-      enabled: false
-      enabled_compression: true
-      host: localhost
-      port: 27017
-      username: ""
-      password: ""
-      databases: []
-      auth_db: admin
-      output_dir: ./backups
-
-mariadb:
-  instances:
-    - name: my-mariadb
-      enabled: false
-      enabled_compression: true
-      host: localhost
-      port: 3306
-      username: ""
-      password: ""
-      databases: []
-      output_dir: ./backups
-
-elasticsearch:
-  instances:
-    - name: my-es
-      enabled: false
-      url: http://localhost:9200
-      repository: my_backup_repo
-      snapshot_name: elasticsearch_backup
-      indices: []
-      username: ""
-      password: ""
-      repository_type: fs
-      repository_settings: {"location": "/var/backups/es"}
+      username: backup_user
+      password: secret
+      databases: [app_db]
+      output_dir: /var/lib/backup-handler/postgresql
 ```
 
----
-## 🔧 Troubleshooting
+Every database type (`mongodb`, `mariadb`, `sqlserver`, `elasticsearch`) follows the same `instances:` list pattern — see `config.sample.yaml` for all their options.
 
-### Common Issues
+Key concepts:
 
-* **7z not found**: Install `p7zip-full` (`apt install p7zip-full` on Ubuntu)
-* **Database connection failed**: Check host, port, credentials in config.yaml
-* **S3 upload failed**: Verify endpoint, access keys, bucket permissions
-* **Encryption key missing**: Ensure `key` is set in `compression.encryption` section
-* **Permission denied**: Run with appropriate user permissions for backup directories
-
-### Logs
-
-Check `./backup.log` for detailed error messages. Logs include timestamps and error details.
-
----
-
-## 🚀 How It Works
-
-* Backs up enabled database instances or files
-* Compresses and encrypts backups using 7z if enabled
-* Uploads to S3 if configured
-* Cleans up old backups based on retention policy
-* Pushes metrics to Prometheus if enabled
-* Logs all operations
-
----
-## 🔧 Troubleshooting
-
-### Common Issues
-
-* **7z not found**: Install `p7zip-full` (`apt install p7zip-full` on Ubuntu)
-* **Database connection failed**: Check host, port, credentials in config.yaml
-* **S3 upload failed**: Verify endpoint, access keys, bucket permissions
-* **Encryption key missing**: Ensure `key` is set in `compression.encryption` section
-* **Permission denied**: Run with appropriate user permissions for backup directories
-
-### Logs
-
-Check `./backup.log` for detailed error messages. Logs include timestamps and error details.
-
----
+| Option | Meaning |
+|--------|---------|
+| `backup.source_dir` / `backup.backup_dir` | Directory you back **up** (input) / where local `.tar.gz` file backups are **written** (output) |
+| `output_dir` (per instance) | **Temporary** location on this machine for dumps before compress/upload; files are deleted after upload, so it needs roughly the size of the largest database |
+| `databases: []` | "all databases" for PostgreSQL/MongoDB/MariaDB. SQL Server always requires an explicit list |
+| `enabled_compression` (per instance) | Whether this instance's dumps get the 7z compress+encrypt treatment |
+| `retain_snapshot_count` (elasticsearch) | Keep only the N newest snapshots in the repository; 0 disables cleanup |
+| `retention.retain_file_count` | Keep only the N newest local `.tar.gz` file backups |
+| `s3.bucket` | Also used as the default bucket for Elasticsearch `s3` repositories when the instance doesn't set one |
 
 ## 🛠 Usage
 
-### Manual Run
-
 ```bash
 source .venv/bin/activate
-python backup.py --all
+
+# Run all enabled backups (files + all enabled DB instances)
+python3 backup.py --all
+
+# Only back up files (source_dir)
+python3 backup.py --files
+
+# Back up one database type (all enabled instances)
+python3 backup.py --postgresql
+python3 backup.py --mongodb
+python3 backup.py --mariadb
+python3 backup.py --sqlserver
+python3 backup.py --es
+
+# Back up specific instances (comma-separated names)
+python3 backup.py --postgresql main-pg
 ```
 
-### CLI Options
+Running without arguments behaves like `--all`.
 
-* `--all`: Backup all enabled instances
-* `--postgresql <name>`: Backup specific PostgreSQL instance
-* `--mongodb <name>`: Backup specific MongoDB instance
-* `--mariadb <name>`: Backup specific MariaDB instance
-* `--elasticsearch <name>`: Backup specific Elasticsearch instance
-* `--files`: Backup files from config
+A successful run looks like this in the log:
 
----
-## 🔧 Troubleshooting
+```
+2026-09-19 09:33:25 [INFO] Initialized SQL Server backup for 192.168.71.15:4004, Databases: ['app_casie_db']
+2026-09-19 09:33:38 [INFO] SQL Server export completed for database: app_casie_db
+2026-09-19 09:33:41 [INFO] Compressed and encrypted /var/lib/backup-handler/sqlserver/sqlserver_app_casie_db_....bacpac to ....bacpac.7z using 7z
+2026-09-19 09:33:43 [INFO] Successfully uploaded to S3: s3://my-backup-bucket/myapp/sqlserver_app_casie_db_....bacpac.7z
+```
 
-### Common Issues
+## 🚀 How It Works
 
-* **7z not found**: Install `p7zip-full` (`apt install p7zip-full` on Ubuntu)
-* **Database connection failed**: Check host, port, credentials in config.yaml
-* **S3 upload failed**: Verify endpoint, access keys, bucket permissions
-* **Encryption key missing**: Ensure `key` is set in `compression.encryption` section
-* **Permission denied**: Run with appropriate user permissions for backup directories
+1. Reads `config.yaml` and runs the selected targets (enabled instances only)
+2. Database dumps are written per database to the instance `output_dir`
+   * PostgreSQL/MariaDB: one `.sql` file per database
+   * MongoDB: one dump directory per database (`mongodb_<db>_<timestamp>`)
+   * SQL Server: one `.bacpac` file per database
+3. Each dump is compressed and encrypted into a `.7z` archive (when `enabled_compression` is set)
+4. Archives are uploaded to S3 (when `s3.enabled`) and removed locally after a successful upload
+5. Elasticsearch takes snapshots through its API
+6. Old local file backups are cleaned based on the retention policy
+7. Statuses are pushed to Prometheus Pushgateway
 
-### Logs
-
-Check `./backup.log` for detailed error messages. Logs include timestamps and error details.
-
----
+**End result:** one `<dbtype>_<database>_<timestamp>.7z` archive per database in your S3 bucket (under `prefix`), nothing left behind locally except logs, and a `backup_status` metric in the Pushgateway summarising what succeeded or failed.
 
 ## ⏰ Cron Example
 
 ```cron
 # Backup every day at 03:00 AM
-0 3 * * * user /path/to/venv/bin/python /path/to/backup.py --all
+0 3 * * * root /opt/backup-handler/.venv/bin/python /opt/backup-handler/backup.py --all >> /opt/backup-handler/cron.log 2>&1
 ```
 
-Set environment variable in cron:
+No venv activation is needed in cron — call the venv's python binary directly. Verify the exact command works in cron's bare environment first:
 
 ```bash
-# In crontab
-0 3 * * * user /path/to/venv/bin/python /path/to/backup.py --all
+env -i /opt/backup-handler/.venv/bin/python /opt/backup-handler/backup.py --all
 ```
-
----
-## 🔧 Troubleshooting
-
-### Common Issues
-
-* **7z not found**: Install `p7zip-full` (`apt install p7zip-full` on Ubuntu)
-* **Database connection failed**: Check host, port, credentials in config.yaml
-* **S3 upload failed**: Verify endpoint, access keys, bucket permissions
-* **Encryption key missing**: Ensure `key` is set in `compression.encryption` section
-* **Permission denied**: Run with appropriate user permissions for backup directories
-
-### Logs
-
-Check `./backup.log` for detailed error messages. Logs include timestamps and error details.
-
----
 
 ## 🔐 Restore Instructions
 
-Backup files are `.7z` archives (compressed and encrypted).
-
-### Prerequisites
-- Install 7z: `apt install p7zip-full`
-- Set `BACKUP_KEY` environment variable
-
-### Restore Steps
+Backup archives are `.7z` files (compressed and encrypted with the key from `compression.encryption.key`).
 
 1. **Extract backup**:
+
    ```bash
    7z x -p"your_key_from_config" backup_file.7z
    ```
 
 2. **Restore database**:
-   - PostgreSQL: `psql -h host -U user -d db < backup.sql`
-   - MongoDB: `mongorestore --db db backup_dir`
-   - MariaDB: `mysql -h host -u user -p db < backup.sql`
+   * PostgreSQL: `psql -h host -U user -d db < backup.sql`
+   * MongoDB: `mongorestore --host host --db db backup_dir/<db>`
+   * MariaDB: `mysql -h host -u user -p db < backup.sql`
+   * SQL Server: `sqlpackage /Action:Import /SourceFile:backup.bacpac /TargetConnectionString:"Server=host,port;Database=db;User Id=user;Password=pass;TrustServerCertificate=True"`
+   * Elasticsearch: restore the snapshot through the ES API
 
----
 ## 🔧 Troubleshooting
 
 ### Common Issues
@@ -353,260 +245,20 @@ Backup files are `.7z` archives (compressed and encrypted).
 * **S3 upload failed**: Verify endpoint, access keys, bucket permissions
 * **Encryption key missing**: Ensure `key` is set in `compression.encryption` section
 * **Permission denied**: Run with appropriate user permissions for backup directories
+* **MongoDB `not authorized on config`**: remove internal databases (`config`, `local`) from the instance `databases` list
+* **SQL Server `SQL71564` orphaned user**: see [SQL Server](#sql-server) above
+* **Elasticsearch `path.repo` / `repository_missing_exception`**: make sure the ES server has `path.repo` set to a writable directory matching the repository `location`
+* **Prometheus push `NoneType object is not callable`**: fixed in current versions; make sure the deployed `prometheus_push.py` is up to date
 
 ### Logs
 
-Check `./backup.log` for detailed error messages. Logs include timestamps and error details.
-
----
-
-
-## Contribute
-
-https://github.com/m-nik/backup-handler
-
-```yaml
-backup:
-  source_dir: /data/to/backup
-  backup_dir: ./backups
-  backup_name: myapp_backup
-  enabled: false
-
-retention:
-  enable: false
-  retain_file_count: 5
-
-s3:
-  enabled: false
-  region: us-east-1
-  bucket: my-backup-bucket
-  prefix: backups/
-  access_key: minioadmin
-  secret_key: minioadmin
-  endpoint: http://localhost:9000
-
-logging:
-  log_file: ./backup.log
-  handlers: ['console', 'file']
-
-compression:
-  enabled: false
-  method: zstd
-  level: 3
-  encryption:
-    enabled: false
-    key: "your_secret_key_here"
-
-metrics:
-  enabled: false
-  pushgateway_url: http://localhost:9091
-  job_name: backup_job
-  instance: server01
-  username: your_username
-  password: your_password
-
-postgresql:
-  instances:
-    - name: my-pg
-      enabled: false
-      enabled_compression: true
-      host: localhost
-      port: 5432
-      username: ""
-      password: ""
-      databases: []
-      output_dir: ./backups
-
-mongodb:
-  instances:
-    - name: my-mongo
-      enabled: false
-      enabled_compression: true
-      host: localhost
-      port: 27017
-      username: ""
-      password: ""
-      databases: []
-      auth_db: admin
-      output_dir: ./backups
-
-mariadb:
-  instances:
-    - name: my-mariadb
-      enabled: false
-      enabled_compression: true
-      host: localhost
-      port: 3306
-      username: ""
-      password: ""
-      databases: []
-      output_dir: ./backups
-
-elasticsearch:
-  instances:
-    - name: my-es
-      enabled: false
-      url: http://localhost:9200
-      repository: my_backup_repo
-      snapshot_name: elasticsearch_backup
-      indices: []
-      username: ""
-      password: ""
-      repository_type: fs
-      repository_settings: {"location": "/var/backups/es"}
-```
-
----
-## 🔧 Troubleshooting
-
-### Common Issues
-
-* **7z not found**: Install `p7zip-full` (`apt install p7zip-full` on Ubuntu)
-* **Database connection failed**: Check host, port, credentials in config.yaml
-* **S3 upload failed**: Verify endpoint, access keys, bucket permissions
-* **Encryption key missing**: Ensure `key` is set in `compression.encryption` section
-* **Permission denied**: Run with appropriate user permissions for backup directories
-
-### Logs
-
-Check `./backup.log` for detailed error messages. Logs include timestamps and error details.
-
----
-
-## 🚀 How It Works
-
-* Backs up enabled database instances or files
-* Compresses and encrypts backups using 7z if enabled
-* Uploads to S3 if configured
-* Cleans up old backups based on retention policy
-* Pushes metrics to Prometheus if enabled
-* Logs all operations
-
----
-## 🔧 Troubleshooting
-
-### Common Issues
-
-* **7z not found**: Install `p7zip-full` (`apt install p7zip-full` on Ubuntu)
-* **Database connection failed**: Check host, port, credentials in config.yaml
-* **S3 upload failed**: Verify endpoint, access keys, bucket permissions
-* **Encryption key missing**: Ensure `key` is set in `compression.encryption` section
-* **Permission denied**: Run with appropriate user permissions for backup directories
-
-### Logs
-
-Check `./backup.log` for detailed error messages. Logs include timestamps and error details.
-
----
-
-## 🛠 Usage
-
-### Manual Run
-
-```bash
-source .venv/bin/activate
-python backup.py --all
-```
-
-### CLI Options
-
-* `--all`: Backup all enabled instances
-* `--postgresql <name>`: Backup specific PostgreSQL instance
-* `--mongodb <name>`: Backup specific MongoDB instance
-* `--mariadb <name>`: Backup specific MariaDB instance
-* `--elasticsearch <name>`: Backup specific Elasticsearch instance
-* `--files`: Backup files from config
-
----
-## 🔧 Troubleshooting
-
-### Common Issues
-
-* **7z not found**: Install `p7zip-full` (`apt install p7zip-full` on Ubuntu)
-* **Database connection failed**: Check host, port, credentials in config.yaml
-* **S3 upload failed**: Verify endpoint, access keys, bucket permissions
-* **Encryption key missing**: Ensure `key` is set in `compression.encryption` section
-* **Permission denied**: Run with appropriate user permissions for backup directories
-
-### Logs
-
-Check `./backup.log` for detailed error messages. Logs include timestamps and error details.
-
----
-
-## ⏰ Cron Example
-
-```cron
-# Backup every day at 03:00 AM
-0 3 * * * user /path/to/venv/bin/python /path/to/backup.py --all
-```
-
-Set environment variable in cron:
-
-```bash
-# In crontab
-0 3 * * * user /path/to/venv/bin/python /path/to/backup.py --all
-```
-
----
-## 🔧 Troubleshooting
-
-### Common Issues
-
-* **7z not found**: Install `p7zip-full` (`apt install p7zip-full` on Ubuntu)
-* **Database connection failed**: Check host, port, credentials in config.yaml
-* **S3 upload failed**: Verify endpoint, access keys, bucket permissions
-* **Encryption key missing**: Ensure `key` is set in `compression.encryption` section
-* **Permission denied**: Run with appropriate user permissions for backup directories
-
-### Logs
-
-Check `./backup.log` for detailed error messages. Logs include timestamps and error details.
-
----
-
-## 🔐 Restore Instructions
-
-Backup files are `.7z` archives (compressed and encrypted).
-
-### Prerequisites
-- Install 7z: `apt install p7zip-full`
-- Set `BACKUP_KEY` environment variable
-
-### Restore Steps
-
-1. **Extract backup**:
-   ```bash
-   7z x -p"your_key_from_config" backup_file.7z
-   ```
-
-2. **Restore database**:
-   - PostgreSQL: `psql -h host -U user -d db < backup.sql`
-   - MongoDB: `mongorestore --db db backup_dir`
-   - MariaDB: `mysql -h host -u user -p db < backup.sql`
-
----
-## 🔧 Troubleshooting
-
-### Common Issues
-
-* **7z not found**: Install `p7zip-full` (`apt install p7zip-full` on Ubuntu)
-* **Database connection failed**: Check host, port, credentials in config.yaml
-* **S3 upload failed**: Verify endpoint, access keys, bucket permissions
-* **Encryption key missing**: Ensure `key` is set in `compression.encryption` section
-* **Permission denied**: Run with appropriate user permissions for backup directories
-
-### Logs
-
-Check `./backup.log` for detailed error messages. Logs include timestamps and error details.
-
----
-
+Check the file from `logging.log_file` (default `./backup.log`) for detailed error messages. Logs include timestamps and error details.
 
 ## TODO
-- فقط از 7z استفاده می کنیم. آپدیت کد و کانفیگ
-- آپدیت Readme حذف zstd
-- پستگرس بدون توجه به enabled ساخته می شود
+
+* only use 7z, drop remaining zstd/gzip references in code and config
+* postgresql instances are created regardless of the `enabled` flag when selected explicitly
+* elasticsearch s3 repository vs fs decision
 
 ## Contribute
 

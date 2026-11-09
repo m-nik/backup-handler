@@ -91,6 +91,9 @@ metrics:
 elasticsearch:
   # Support multiple named instances for each DB type. Each instance can specify credentials
   # and other connection details. `name` is required to reference it from CLI.
+  # repository_type: 'fs' stores snapshots on the ES server disk (requires path.repo on ES),
+  # 's3' stores snapshots directly in S3-compatible storage (requires repository-s3 plugin
+  # and an S3 client configured on the ES server).
   instances:
     - name: local
       enabled: false
@@ -101,7 +104,26 @@ elasticsearch:
       username: ""
       password: ""
       repository_type: fs
-      repository_settings: {"location": "/var/backups/es"}
+      repository_settings: {"location": "/usr/share/elasticsearch/backup"}
+      # Number of snapshots to keep in the repository (oldest are deleted). 0 disables cleanup.
+      retain_snapshot_count: 0
+
+    - name: s3-instance
+      enabled: false
+      url: http://localhost:9200
+      repository: my_s3_backup_repo
+      snapshot_name: elasticsearch_backup
+      indices: []
+      username: ""
+      password: ""
+      repository_type: s3
+      # 'client' is the S3 client name configured on the ES server (repository-s3 plugin),
+      # 'base_path' is the folder inside the bucket. When 'bucket' is omitted it
+      # falls back to the bucket from the global s3 section above.
+      repository_settings:
+        base_path: elasticsearch
+        client: default
+      retain_snapshot_count: 0
 
 postgresql:
   instances:
@@ -139,3 +161,23 @@ mariadb:
       password: ""
       databases: []
       output_dir: ./backups
+
+sqlserver:
+  # Uses sqlpackage /Action:Export to create a .bacpac per database.
+  # Install sqlpackage on this machine first (dotnet tool or standalone):
+  # https://learn.microsoft.com/sql/tools/sqlpackage/sqlpackage-download
+  # sqlpackage cannot export all databases at once, so 'databases' must list them.
+  instances:
+    - name: local
+      enabled: false
+      enabled_compression: true
+      host: localhost
+      port: 1433
+      username: "sa"
+      password: ""
+      databases: []
+      output_dir: ./backups
+      # accept self-signed TLS certs on the sql server (default true)
+      trust_server_certificate: true
+      # optional: full path to the sqlpackage binary if it is not on PATH
+      sqlpackage_path: sqlpackage

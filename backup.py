@@ -13,6 +13,7 @@ from elasticsearch_backup import ElasticsearchBackup
 from mongodb_backup import MongoDBBackup
 from postgresql_backup import PostgreSQLBackup
 from mariadb_backup import MariaDBBackup
+from sqlserver_backup import SQLServerBackup
 import shutil
 
 # === Load config.yaml ===
@@ -76,6 +77,7 @@ def main():
     parser.add_argument('--mongodb', nargs='?', const='all', help='MongoDB instances to backup (comma-separated names) or "all"')
     parser.add_argument('--postgresql', nargs='?', const='all', help='PostgreSQL instances to backup (comma-separated names) or "all"')
     parser.add_argument('--mariadb', nargs='?', const='all', help='MariaDB instances to backup (comma-separated names) or "all"')
+    parser.add_argument('--sqlserver', nargs='?', const='all', help='SQL Server instances to backup (comma-separated names) or "all"')
     args = parser.parse_args()
 
     # Determine what to run
@@ -85,6 +87,7 @@ def main():
         'mongodb': args.mongodb,
         'postgresql': args.postgresql,
         'mariadb': args.mariadb,
+        'sqlserver': args.sqlserver,
         'all': args.all
     }
 
@@ -123,7 +126,7 @@ def main():
             sys.exit(1)
 
         # Determine selection behavior
-        has_any = any([selections['all'], selections['files'], selections['es'], selections['mongodb'], selections['postgresql'], selections['mariadb']])
+        has_any = any([selections['all'], selections['files'], selections['es'], selections['mongodb'], selections['postgresql'], selections['mariadb'], selections['sqlserver']])
         backup_enabled = config['backup'].get('enabled', False)
         run_files = (selections['all'] or selections['files'] or not has_any) and backup_enabled
         run_all_dbs = selections['all'] or not has_any
@@ -180,7 +183,11 @@ def main():
                 es_result = es_backup.run()
                 name = inst.get('name', inst.get('url', 'es'))
                 if es_result["status"] == "success":
-                    prometheus_pusher.update_status("es_backup", f"{name}: snapshot {es_result['snapshot']} succeeded", 1)
+                    msg = f"{name}: snapshot {es_result['snapshot']} succeeded"
+                    deleted = es_result.get('deleted_old_snapshots', 0)
+                    if deleted:
+                        msg += f", deleted {deleted} old snapshots"
+                    prometheus_pusher.update_status("es_backup", msg, 1)
                 elif es_result["status"] == "disabled":
                     prometheus_pusher.update_status("es_backup", f"{name}: disabled")
                 else:
@@ -195,38 +202,29 @@ def main():
                 mongodb_result = mongodb_backup.run()
                 name = inst.get('name', inst.get('host', 'mongodb'))
                 if mongodb_result["status"] == "success":
-                    # If path is a directory, create a tar archive first
-                    backup_path = mongodb_result['path']
-                    # if os.path.isdir(backup_path):
-                    #     tar_path = backup_path + '.tar'
-                    #     with tarfile.open(tar_path, "w") as tar:
-                    #         tar.add(backup_path, arcname=os.path.basename(backup_path))
-                    #     # Remove the directory after archiving
-                    #     import shutil
-                    #     shutil.rmtree(backup_path)
-                    #     backup_path = tar_path
-                    # Process compression/encryption
-                    enabled_compression = inst.get('enabled_compression', False)
-                    final_file = compression_encryption.process_file(backup_path, enabled_compression)
+                    # Process each dumped database directory
+                    for backup_path in mongodb_result['dirs']:
+                        enabled_compression = inst.get('enabled_compression', False)
+                        final_file = compression_encryption.process_file(backup_path, enabled_compression)
 
-                    # Remove original file(s)
-                    if os.path.isfile(backup_path):
-                        os.remove(backup_path)
-                    elif os.path.isdir(backup_path):
-                        shutil.rmtree(backup_path)
+                        # Remove original directory
+                        if os.path.isfile(backup_path):
+                            os.remove(backup_path)
+                        elif os.path.isdir(backup_path):
+                            shutil.rmtree(backup_path)
 
-                    # Upload to S3 if file changed
-                    if final_file != backup_path:
-                        s3_result = s3_uploader.upload(final_file, os.path.basename(final_file))
-                        if s3_result["status"] == "success":
-                            prometheus_pusher.update_status("mongodb_upload", f"{name}: uploaded {s3_result['key']}", 1)
-                            # Remove processed file after upload
-                            os.remove(final_file)
+                        # Upload to S3 if file changed
+                        if final_file != backup_path:
+                            s3_result = s3_uploader.upload(final_file, os.path.basename(final_file))
+                            if s3_result["status"] == "success":
+                                prometheus_pusher.update_status("mongodb_upload", f"{name}: uploaded {s3_result['key']}", 1)
+                                # Remove processed file after upload
+                                os.remove(final_file)
+                            else:
+                                prometheus_pusher.update_status("mongodb_upload", f"{name}: {s3_result['message']}")
                         else:
-                            prometheus_pusher.update_status("mongodb_upload", f"{name}: {s3_result['message']}")
-                    else:
-                        prometheus_pusher.update_status("mongodb_upload", f"{name}: no upload needed")
-                    prometheus_pusher.update_status("mongodb_backup", f"{name}: backup to {final_file} succeeded", 1)
+                            prometheus_pusher.update_status("mongodb_upload", f"{name}: no upload needed")
+                    prometheus_pusher.update_status("mongodb_backup", f"{name}: backup to {mongodb_result['dirs']} succeeded", 1)
                 elif mongodb_result["status"] == "disabled":
                     prometheus_pusher.update_status("mongodb_backup", f"{name}: disabled")
                 else:
@@ -299,6 +297,40 @@ def main():
                     prometheus_pusher.update_status("mariadb_backup", f"{name}: disabled")
                 else:
                     prometheus_pusher.update_status("mariadb_backup", f"{name}: {mariadb_result['message']}")
+
+        # SQL Server
+        if selections['all'] or selections['sqlserver'] or (not has_any and run_all_dbs):
+            sqlserver_selector = selections['sqlserver'] if selections['sqlserver'] else 'all'
+            sqlserver_instances = _get_instances('sqlserver', sqlserver_selector)
+            for inst in sqlserver_instances:
+                sqlserver_backup = SQLServerBackup(instance=inst)
+                sqlserver_result = sqlserver_backup.run()
+                name = inst.get('name', inst.get('host', 'sqlserver'))
+                if sqlserver_result["status"] == "success":
+                    # Process each file
+                    for file_path in sqlserver_result['files']:
+                        enabled_compression = inst.get('enabled_compression', False)
+                        final_file = compression_encryption.process_file(file_path, enabled_compression)
+
+                        # Remove original file(s)
+                        os.remove(file_path)
+
+                        # Upload to S3 if file changed
+                        if final_file != file_path:
+                            s3_result = s3_uploader.upload(final_file, os.path.basename(final_file))
+                            if s3_result["status"] == "success":
+                                prometheus_pusher.update_status("sqlserver_upload", f"{name}: uploaded {s3_result['key']}", 1)
+                                # Remove processed file after upload
+                                os.remove(final_file)
+                            else:
+                                prometheus_pusher.update_status("sqlserver_upload", f"{name}: {s3_result['message']}")
+                        else:
+                            prometheus_pusher.update_status("sqlserver_upload", f"{name}: no upload needed")
+                    prometheus_pusher.update_status("sqlserver_backup", f"{name}: backup to {sqlserver_result['files']} succeeded", 1)
+                elif sqlserver_result["status"] == "disabled":
+                    prometheus_pusher.update_status("sqlserver_backup", f"{name}: disabled")
+                else:
+                    prometheus_pusher.update_status("sqlserver_backup", f"{name}: {sqlserver_result['message']}")
 
         # Clean old backups
         clean_result = backup_cleaner.clean()

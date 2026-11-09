@@ -3,7 +3,7 @@ import datetime
 import logging
 import json
 import yaml
-from elasticsearch import Elasticsearch
+from elasticsearch import Elasticsearch, NotFoundError
 
 
 class ElasticsearchBackup:
@@ -13,14 +13,17 @@ class ElasticsearchBackup:
         """
         self.logger = logging.getLogger("elasticsearch-backup")
 
+        # Global s3 settings are always read from config.yaml
+        if config_file is None:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            config_file = os.path.join(base_dir, "config.yaml")
+        with open(config_file, 'r') as f:
+            cfg_all = yaml.safe_load(f)
+        s3_global = cfg_all.get('s3', {}) or {}
+
         if instance:
             cfg = instance
         else:
-            if config_file is None:
-                base_dir = os.path.dirname(os.path.abspath(__file__))
-                config_file = os.path.join(base_dir, "config.yaml")
-            with open(config_file, 'r') as f:
-                cfg_all = yaml.safe_load(f)
             es_section = cfg_all.get('elasticsearch', {}) or {}
             instances = es_section.get('instances') if isinstance(es_section, dict) else None
             if instances and isinstance(instances, list) and len(instances) > 0:
@@ -37,6 +40,15 @@ class ElasticsearchBackup:
         self.password = cfg.get('password')
         self.repo_type = cfg.get('repository_type', 'fs')
         self.repo_settings = cfg.get('repository_settings', '{}')
+        self.retain_snapshot_count = cfg.get('retain_snapshot_count', 0)
+
+        # For s3 repositories, fall back to the global s3 bucket when the
+        # instance doesn't specify one, so it doesn't have to be repeated.
+        if self.repo_type == 's3' and isinstance(self.repo_settings, dict):
+            if not self.repo_settings.get('bucket') and s3_global.get('bucket'):
+                self.repo_settings = dict(self.repo_settings)
+                self.repo_settings['bucket'] = s3_global['bucket']
+                self.logger.info(f"Using bucket '{s3_global['bucket']}' from global s3 config for repository")
 
         self.logger.info(f"Initialized Elasticsearch backup for URL: {self.url}, Repository: {self.repository}")
 
@@ -53,29 +65,57 @@ class ElasticsearchBackup:
     def _ensure_repository(self, es_client):
         """Create repository if it doesn't exist"""
         try:
-            # Check if repository exists
-            response = es_client.snapshot.get_repository(name=self.repository, ignore=[404])
-            if 404 in response:
-                # Repository doesn't exist, create it
-                repo_settings = json.loads(self.repo_settings)
-                es_client.snapshot.create_repository(
-                    name=self.repository,
-                    body={
-                        "type": self.repo_type,
-                        "settings": repo_settings
-                    }
-                )
-                self.logger.info(f"Created Elasticsearch repository: {self.repository}")
-            else:
+            response = es_client.snapshot.get_repository(name=self.repository)
+            existing = response.get(self.repository)
+            if existing:
+                if existing.get('type') != self.repo_type:
+                    raise Exception(
+                        f"Repository '{self.repository}' already exists with type "
+                        f"'{existing.get('type')}' but config says '{self.repo_type}'. "
+                        f"Delete the repository or align the config."
+                    )
                 self.logger.info(f"Elasticsearch repository already exists: {self.repository}")
-        except Exception as e:
-            self.logger.error(f"Failed to ensure repository: {e}")
-            raise
+                return
+        except NotFoundError:
+            pass
+
+        repo_settings = self.repo_settings
+        if isinstance(repo_settings, str):
+            repo_settings = json.loads(repo_settings)
+        es_client.snapshot.create_repository(
+            name=self.repository,
+            body={
+                "type": self.repo_type,
+                "settings": repo_settings
+            }
+        )
+        self.logger.info(f"Created Elasticsearch repository: {self.repository}")
+
+    def _clean_old_snapshots(self, es_client):
+        """Delete oldest snapshots beyond retain_snapshot_count (0 disables)"""
+        if not self.retain_snapshot_count or self.retain_snapshot_count < 1:
+            return 0
+
+        result = es_client.snapshot.get(repository=self.repository, snapshot='*')
+        snapshots = result.get('snapshots', [])
+        if len(snapshots) <= self.retain_snapshot_count:
+            return 0
+
+        snapshots.sort(key=lambda s: s.get('start_time_in_millis', 0))
+        to_delete = snapshots[:len(snapshots) - self.retain_snapshot_count]
+        for snap in to_delete:
+            snap_name = snap.get('snapshot')
+            try:
+                es_client.snapshot.delete(repository=self.repository, snapshot=snap_name)
+                self.logger.info(f"Deleted old Elasticsearch snapshot: {snap_name}")
+            except Exception as e:
+                self.logger.warning(f"Failed to delete snapshot {snap_name}: {e}")
+        return len(to_delete)
 
     def _create_snapshot(self, es_client):
         """Create a snapshot of specified indices or all if none specified"""
         self.logger.info("Creating Elasticsearch snapshot...")
-        timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S_%f")
         snapshot_name = f"{self.snapshot_name}_{timestamp}"
 
         indices = ",".join(self.indices) if self.indices else "_all"
@@ -109,8 +149,9 @@ class ElasticsearchBackup:
             es_client = self._connect()
             self._ensure_repository(es_client)
             snapshot_name = self._create_snapshot(es_client)
+            deleted = self._clean_old_snapshots(es_client)
             self.logger.info("Elasticsearch backup completed successfully")
-            return {"status": "success", "snapshot": snapshot_name}
+            return {"status": "success", "snapshot": snapshot_name, "deleted_old_snapshots": deleted}
         except Exception as e:
             self.logger.exception(f"Elasticsearch backup failed: {e}")
             return {"status": "error", "message": str(e)}
